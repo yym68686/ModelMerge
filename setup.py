@@ -9,6 +9,6 @@ setup(
     long_description=Path.open(Path("README.md"), encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     packages=find_packages("models"),
-    package_dir={"": "src"},
+    package_dir={"": "models"},
     # py_modules=["LLM-Hub"]
 )
