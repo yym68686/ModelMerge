@@ -1,3 +1,5 @@
+from tools import claude_tools_list
+
 class claudeConversation(dict):
     def Conversation(self, index):
         conversation_list = super().__getitem__(index)

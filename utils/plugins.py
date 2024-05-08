@@ -147,17 +147,14 @@ def getddgsearchurl(result, numresults=4):
     # print("ddg urls", urls)
     return urls
 
-from utils.googlesearch import GoogleSearchAPIWrapper
+from googleapiclient.discovery import build
 def getgooglesearchurl(result, numresults=3):
-    google_search = GoogleSearchAPIWrapper()
     urls = []
     try:
-        googleresult = google_search.results(result, numresults)
-        # print("googleresult", googleresult)
-        for i in googleresult:
-            if "No good Google Search Result was found" in i or "google.com" in i["link"]:
-                continue
-            urls.append(i["link"])
+        service = build("customsearch", "v1", developerKey=os.environ.get('GOOGLE_API_KEY', None))
+        res = service.cse().list(q=result, cx=os.environ.get('GOOGLE_CSE_ID', None)).execute()
+        link_list = [item['link'] for item in res['items']]
+        urls = link_list[:numresults]
     except Exception as e:
         print('\033[31m')
         print("error", e)

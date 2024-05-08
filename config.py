@@ -2,7 +2,6 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 import utils.prompt as prompt
-from telegram import InlineKeyboardButton
 
 WEB_HOOK = os.environ.get('WEB_HOOK', None)
 BOT_TOKEN = os.environ.get('BOT_TOKEN', None)
@@ -34,26 +33,26 @@ Current_Date = current_date.strftime("%Y-%m-%d")
 systemprompt = os.environ.get('SYSTEMPROMPT', prompt.system_prompt.format(LANGUAGE, Current_Date))
 claude_systemprompt = os.environ.get('SYSTEMPROMPT', prompt.claude_system_prompt)
 
-from utils.chatgpt2api import Chatbot as GPT
-from utils.chatgpt2api import Imagebot, claudebot, groqbot, claude3bot, gemini_bot
-if API:
-    ChatGPTbot = GPT(api_key=f"{API}", engine=GPT_ENGINE, system_prompt=systemprompt, temperature=temperature)
+# from utils.chatgpt2api import Chatbot as GPT
+# from utils.chatgpt2api import Imagebot, claudebot, groqbot, claude3bot, gemini_bot
+# if API:
+#     ChatGPTbot = GPT(api_key=f"{API}", engine=GPT_ENGINE, system_prompt=systemprompt, temperature=temperature)
 
-    translate_bot = GPT(api_key=f"{API}", engine=GPT_ENGINE, system_prompt=systemprompt, temperature=temperature)
-    copilot_bot = GPT(api_key=f"{API}", engine=GPT_ENGINE, system_prompt=prompt.search_system_prompt.format(LANGUAGE), temperature=temperature)
-    dallbot = Imagebot(api_key=f"{API}")
-else:
-    ChatGPTbot = None
+#     translate_bot = GPT(api_key=f"{API}", engine=GPT_ENGINE, system_prompt=systemprompt, temperature=temperature)
+#     copilot_bot = GPT(api_key=f"{API}", engine=GPT_ENGINE, system_prompt=prompt.search_system_prompt.format(LANGUAGE), temperature=temperature)
+#     dallbot = Imagebot(api_key=f"{API}")
+# else:
+#     ChatGPTbot = None
 
-ClaudeAPI = os.environ.get('claude_api_key', None)
-if ClaudeAPI:
-    claudeBot = claudebot(api_key=f"{ClaudeAPI}", system_prompt=claude_systemprompt)
-    claude3Bot = claude3bot(api_key=f"{ClaudeAPI}", system_prompt=claude_systemprompt)
+# ClaudeAPI = os.environ.get('claude_api_key', None)
+# if ClaudeAPI:
+#     claudeBot = claudebot(api_key=f"{ClaudeAPI}", system_prompt=claude_systemprompt)
+#     claude3Bot = claude3bot(api_key=f"{ClaudeAPI}", system_prompt=claude_systemprompt)
 
-if GROQ_API_KEY:
-    groqBot = groqbot(api_key=f"{GROQ_API_KEY}")
-if GOOGLE_AI_API_KEY:
-    gemini_Bot = gemini_bot(api_key=f"{GOOGLE_AI_API_KEY}")
+# if GROQ_API_KEY:
+#     groqBot = groqbot(api_key=f"{GROQ_API_KEY}")
+# if GOOGLE_AI_API_KEY:
+#     gemini_Bot = gemini_bot(api_key=f"{GOOGLE_AI_API_KEY}")
 
 whitelist = os.environ.get('whitelist', None)
 if whitelist:
@@ -83,20 +82,7 @@ class userConfig:
         self.search_system_prompt = prompt.search_system_prompt.format(self.language)
         self.search_model = "gpt-3.5-turbo-1106"
 
-class openaiAPI:
-    def __init__(
-        self,
-        api_url: str = (os.environ.get("API_URL") or "https://api.openai.com/v1/chat/completions"),
-    ):
-        from urllib.parse import urlparse, urlunparse
-        self.source_api_url: str = api_url
-        parsed_url = urlparse(self.source_api_url)
-        self.base_url: str = urlunparse(parsed_url[:2] + ("",) * 4)
-        self.v1_url: str = urlunparse(parsed_url[:2] + ("/v1",) + ("",) * 3)
-        self.chat_url: str = urlunparse(parsed_url[:2] + ("/v1/chat/completions",) + ("",) * 3)
-        self.image_url: str = urlunparse(parsed_url[:2] + ("/v1/images/generations",) + ("",) * 3)
 
-bot_api_url = openaiAPI()
 
 def get_plugins_status(item):
     return "✅" if PLUGINS[item] else "☑️"
@@ -108,33 +94,6 @@ def delete_model_digit_tail(lst):
                 return "-".join(lst)
             else:
                 return "-".join(lst[:i + 1])
-
-def create_buttons(strings):
-    # 过滤出长度小于15的字符串
-    filtered_strings1 = [s for s in strings if len(delete_model_digit_tail(s.split("-"))) <= 14]
-    filtered_strings2 = [s for s in strings if len(delete_model_digit_tail(s.split("-"))) > 14]
-
-    buttons = []
-    temp = []
-
-    for string in filtered_strings1:
-        button = InlineKeyboardButton(delete_model_digit_tail(string.split("-")), callback_data=string)
-        temp.append(button)
-
-        # 每两个按钮一组
-        if len(temp) == 2:
-            buttons.append(temp)
-            temp = []
-
-    # 如果最后一组不足两个，也添加进去
-    if temp:
-        buttons.append(temp)
-
-    for string in filtered_strings2:
-        button = InlineKeyboardButton(delete_model_digit_tail(string.split("-")), callback_data=string)
-        buttons.append([button])
-
-    return buttons
 
 initial_model = [
     "gpt-4-turbo-2024-04-09",
@@ -162,32 +121,3 @@ if CUSTOM_MODELS_LIST:
                 initial_model.remove(model)
 
     initial_model.extend([model for model in CUSTOM_MODELS_LIST if model not in initial_model and model[0] != "-"])
-
-buttons = create_buttons(initial_model)
-buttons.append(
-    [
-        InlineKeyboardButton("返回上一级", callback_data="返回上一级"),
-    ],
-)
-
-def update_first_buttons_message():
-    history = "✅" if PASS_HISTORY else "☑️"
-    language = "🇨🇳 中文" if LANGUAGE == "Simplified Chinese" else "🇺🇸 English"
-
-    first_buttons = [
-        [
-            InlineKeyboardButton("更换问答模型", callback_data="更换问答模型"),
-            InlineKeyboardButton(language, callback_data="language"),
-            InlineKeyboardButton(f"历史记录 {history}", callback_data="PASS_HISTORY"),
-        ],
-        [
-            InlineKeyboardButton(f"搜索 {get_plugins_status('SEARCH_USE_GPT')}", callback_data='SEARCH_USE_GPT'),
-            InlineKeyboardButton(f"当前时间 {get_plugins_status('DATE')}", callback_data='DATE'),
-        ],
-        [
-            InlineKeyboardButton(f"URL 总结 {get_plugins_status('URL')}", callback_data='URL'),
-            InlineKeyboardButton(f"版本信息 {get_plugins_status('VERSION')}", callback_data='VERSION'),
-            # InlineKeyboardButton(f"gpt4free {get_plugins_status('USE_G4F')}", callback_data='USE_G4F'),
-        ],
-    ]
-    return first_buttons

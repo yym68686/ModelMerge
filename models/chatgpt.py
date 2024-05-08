@@ -3,18 +3,16 @@ import re
 import json
 import copy
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Set
+from .config import BaseLLM, ENGINES, CUSTOM_MODELS, PLUGINS, LANGUAGE
 
 import httpx
 import requests
 import tiktoken
 
-from ... import typings as t
-from typing import Set
-
-import config
-from plugins import *
-from function_call import function_call_list, claude_tools_list
+# import config
+from utils.plugins import check_json, Web_crawler, cut_message
+from tools.function_call import function_call_list
 
 def get_filtered_keys_from_object(obj: object, *keys: str) -> Set[str]:
     """
@@ -37,89 +35,22 @@ def get_filtered_keys_from_object(obj: object, *keys: str) -> Set[str]:
     # Only return specified keys that are in class_keys
     return {key for key in keys if key in class_keys}
 
-ENGINES = [
-    "gpt-3.5-turbo",
-    "gpt-3.5-turbo-16k",
-    "gpt-3.5-turbo-0301",
-    "gpt-3.5-turbo-0613",
-    "gpt-3.5-turbo-1106",
-    "gpt-3.5-turbo-16k-0613",
-    "gpt-4",
-    "gpt-4-0314",
-    "gpt-4-32k",
-    "gpt-4-32k-0314",
-    "gpt-4-0613",
-    "gpt-4-32k-0613",
-    "gpt-4-1106-preview",
-    "gpt-4-0125-preview",
-    "gpt-4-turbo-preview",
-    "gpt-4-turbo-2024-04-09",
-    "mixtral-8x7b-32768",
-    "llama2-70b-4096",
-    "llama3-70b-8192",
-    "claude-2.1",
-    "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307",
-    "claude-3-opus-20240229",
-    "gemini-1.5-pro-latest",
-]
-if config.CUSTOM_MODELS_LIST:
-    ENGINES.extend(config.CUSTOM_MODELS_LIST)
-
-
-class Imagebot:
+class openaiAPI:
     def __init__(
         self,
-        api_key: str,
-        timeout: float = 20,
+        api_url: str = (os.environ.get("API_URL") or "https://api.openai.com/v1/chat/completions"),
     ):
-        self.api_key: str = api_key
-        self.engine: str = "dall-e-3"
-        self.session = requests.Session()
-        self.timeout: float = timeout
+        from urllib.parse import urlparse, urlunparse
+        self.source_api_url: str = api_url
+        parsed_url = urlparse(self.source_api_url)
+        self.base_url: str = urlunparse(parsed_url[:2] + ("",) * 4)
+        self.v1_url: str = urlunparse(parsed_url[:2] + ("/v1",) + ("",) * 3)
+        self.chat_url: str = urlunparse(parsed_url[:2] + ("/v1/chat/completions",) + ("",) * 3)
+        self.image_url: str = urlunparse(parsed_url[:2] + ("/v1/images/generations",) + ("",) * 3)
 
-    def dall_e_3(
-        self,
-        prompt: str,
-        model: str = None,
-        **kwargs,
-    ):
-        url = config.bot_api_url.image_url
-        headers = {"Authorization": f"Bearer {kwargs.get('api_key', self.api_key)}"}
+chatgpt_api_url = openaiAPI()
 
-        json_post = {
-                "model": os.environ.get("IMAGE_MODEL_NAME") or model or self.engine,
-                "prompt": prompt,
-                "n": 1,
-                "size": "1024x1024",
-        }
-        try:
-            response = self.session.post(
-                url,
-                headers=headers,
-                json=json_post,
-                timeout=kwargs.get("timeout", self.timeout),
-                stream=True,
-            )
-        except ConnectionError:
-            print("连接错误，请检查服务器状态或网络连接。")
-            return
-        except requests.exceptions.ReadTimeout:
-            print("请求超时，请检查网络连接或增加超时时间。{e}")
-            return
-        except Exception as e:
-            print(f"发生了未预料的错误: {e}")
-            return
-
-        if response.status_code != 200:
-            raise t.APIConnectionError(
-                f"{response.status_code} {response.reason} {response.text}",
-            )
-        json_data = json.loads(response.text)
-        url = json_data["data"][0]["url"]
-        yield url
-
-class Chatbot:
+class chatgpt(BaseLLM):
     """
     Official ChatGPT API
     """
@@ -142,9 +73,7 @@ class Chatbot:
         """
         Initialize Chatbot with API key (from https://platform.openai.com/account/api-keys)
         """
-        self.engine: str = engine
-        self.api_key: str = api_key
-        self.system_prompt: str = system_prompt
+        super().__init__(api_key, engine, proxy, timeout, max_tokens, temperature, top_p, presence_penalty, frequency_penalty, reply_count, truncate_limit, system_prompt)
         self.max_tokens: int = max_tokens or (
             4096
             if "gpt-4-1106-preview" in engine or "gpt-4-0125-preview" in engine or "gpt-4-turbo" in engine or "gpt-3.5-turbo-1106" in engine or "claude" in engine
@@ -158,7 +87,6 @@ class Chatbot:
             # if "claude-2.1" in engine
             else 4000
         )
-        # context max tokens
         self.truncate_limit: int = truncate_limit or (
             32000
             # 126500 Control the number of search characters to prevent excessive spending
@@ -173,36 +101,6 @@ class Chatbot:
             if "claude-2.1" in engine
             else 3500
         )
-        self.temperature: float = temperature
-        self.top_p: float = top_p
-        self.presence_penalty: float = presence_penalty
-        self.frequency_penalty: float = frequency_penalty
-        self.reply_count: int = reply_count
-        self.timeout: float = timeout
-        self.proxy = proxy
-        self.session = requests.Session()
-        self.session.proxies.update(
-            {
-                "http": proxy,
-                "https": proxy,
-            },
-        )
-        if proxy := (
-            proxy or os.environ.get("all_proxy") or os.environ.get("ALL_PROXY") or None
-        ):
-            if "socks5h" not in proxy:
-                self.aclient = httpx.AsyncClient(
-                    follow_redirects=True,
-                    proxies=proxy,
-                    timeout=timeout,
-                )
-        else:
-            self.aclient = httpx.AsyncClient(
-                follow_redirects=True,
-                proxies=proxy,
-                timeout=timeout,
-            )
-
         self.conversation: dict[str, list[dict]] = {
             "default": [
                 {
@@ -216,7 +114,7 @@ class Chatbot:
         # self.encode_web_text_list = []
 
         if self.get_token_count("default") > self.max_tokens:
-            raise t.ActionRefuseError("System prompt is too long")
+            raise Exception("System prompt is too long")
 
     def add_to_conversation(
         self,
@@ -269,8 +167,8 @@ class Chatbot:
         """
         while True:
             json_post = self.get_post_body(prompt, role, convo_id, model, pass_history, **kwargs)
-            url = config.bot_api_url.chat_url
-            if "gpt-4" in self.engine or "claude" in self.engine or (config.CUSTOM_MODELS and self.engine in config.CUSTOM_MODELS):
+            url = chatgpt_api_url.chat_url
+            if "gpt-4" in self.engine or "claude" in self.engine or (CUSTOM_MODELS and self.engine in CUSTOM_MODELS):
                 message_token = {
                     "total": self.get_token_count(convo_id),
                 }
@@ -403,13 +301,13 @@ class Chatbot:
             "n": kwargs.get("n", self.reply_count),
             "user": role,
         }
-        if config.CUSTOM_MODELS and self.engine in config.CUSTOM_MODELS and "gpt-" not in self.engine and "claude-3" not in self.engine:
+        if CUSTOM_MODELS and self.engine in CUSTOM_MODELS and "gpt-" not in self.engine and "claude-3" not in self.engine:
             return json_post_body
         json_post_body.update(copy.deepcopy(body))
         json_post_body.update(copy.deepcopy(function_call_list["base"]))
-        for item in config.PLUGINS.keys():
+        for item in PLUGINS.keys():
             try:
-                if config.PLUGINS[item]:
+                if PLUGINS[item]:
                     json_post_body["functions"].append(function_call_list[item])
             except:
                 pass
@@ -453,7 +351,7 @@ class Chatbot:
         print("model_max_tokens", model_max_tokens)
         json_post["max_tokens"] = model_max_tokens
 
-        url = config.bot_api_url.chat_url
+        url = chatgpt_api_url.chat_url
         headers = {"Authorization": f"Bearer {kwargs.get('api_key', self.api_key)}"}
         try:
             response = self.session.post(
@@ -473,9 +371,7 @@ class Chatbot:
             print(f"发生了未预料的错误: {e}")
             return
         if response.status_code != 200:
-            raise t.APIConnectionError(
-                f"{response.status_code} {response.reason} {response.text}",
-            )
+            raise Exception(f"{response.status_code} {response.reason} {response.text}")
         response_role: str = None
         full_response: str = ""
         function_full_response: str = ""
@@ -535,7 +431,7 @@ class Chatbot:
                     function_response = yield from eval(function_call_name)(prompt)
                     function_response, text_len = cut_message(function_response, function_call_max_tokens)
                     function_response = (
-                        f"You need to response the following question: {prompt}. Search results is provided inside <Search_results></Search_results> XML tags. Your task is to think about the question step by step and then answer the above question in {config.LANGUAGE} based on the Search results provided. Please response in {config.LANGUAGE} and adopt a style that is logical, in-depth, and detailed. Note: In order to make the answer appear highly professional, you should be an expert in textual analysis, aiming to make the answer precise and comprehensive. Directly response markdown format, without using markdown code blocks"
+                        f"You need to response the following question: {prompt}. Search results is provided inside <Search_results></Search_results> XML tags. Your task is to think about the question step by step and then answer the above question in {LANGUAGE} based on the Search results provided. Please response in {LANGUAGE} and adopt a style that is logical, in-depth, and detailed. Note: In order to make the answer appear highly professional, you should be an expert in textual analysis, aiming to make the answer precise and comprehensive. Directly response markdown format, without using markdown code blocks"
                         "Here is the Search results, inside <Search_results></Search_results> XML tags:"
                         "<Search_results>"
                         "{}"
@@ -602,7 +498,7 @@ class Chatbot:
         # Get response
         async with self.aclient.stream(
             "post",
-            config.bot_api_url.chat_url,
+            chatgpt_api_url.chat_url,
             headers={"Authorization": f"Bearer {kwargs.get('api_key', self.api_key)}"},
             json={
                 "model": model or self.engine,
@@ -631,10 +527,7 @@ class Chatbot:
         ) as response:
             if response.status_code != 200:
                 await response.aread()
-                raise t.APIConnectionError(
-                    f"{response.status_code} {response.reason_phrase} {response.text}",
-                )
-
+                raise Exception(f"{response.status_code} {response.reason_phrase} {response.text}")
             response_role: str = ""
             full_response: str = ""
             async for line in response.aiter_lines():
@@ -647,7 +540,7 @@ class Chatbot:
                     break
                 resp: dict = json.loads(line)
                 if "error" in resp:
-                    raise t.ResponseError(f"{resp['error']}")
+                    raise Exception(f"{resp['error']}")
                 choices = resp.get("choices")
                 if not choices:
                     continue
@@ -776,359 +669,3 @@ class Chatbot:
             if "aclient" in keys:
                 keys.remove("aclient")
             self.__dict__.update({key: loaded_config[key] for key in keys})
-
-
-class groqbot:
-    def __init__(
-        self,
-        api_key: str,
-        engine: str = os.environ.get("GPT_ENGINE") or "llama3-70b-8192",
-        temperature: float = 0.5,
-        top_p: float = 1,
-        chat_url: str = "https://api.groq.com/openai/v1/chat/completions",
-        timeout: float = 20,
-        system_prompt: str = "You are ChatGPT, a large language model trained by OpenAI. Respond conversationally",
-        **kwargs,
-    ):
-        self.api_key: str = api_key
-        self.engine: str = engine
-        self.temperature = temperature
-        self.top_p = top_p
-        self.chat_url = chat_url
-        self.timeout = timeout
-        self.session = requests.Session()
-        self.conversation: dict[str, list[dict]] = {
-            "default": [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-            ],
-        }
-        self.system_prompt = system_prompt
-
-    def add_to_conversation(
-        self,
-        message: str,
-        role: str,
-        convo_id: str = "default",
-        pass_history: bool = True,
-    ) -> None:
-        """
-        Add a message to the conversation
-        """
-
-        if convo_id not in self.conversation or pass_history == False:
-            self.reset(convo_id=convo_id)
-        self.conversation[convo_id].append({"role": role, "content": message})
-
-    def reset(self, convo_id: str = "default", system_prompt: str = None) -> None:
-        """
-        Reset the conversation
-        """
-        self.conversation[convo_id] = list()
-
-    def __truncate_conversation(self, convo_id: str = "default") -> None:
-        """
-        Truncate the conversation
-        """
-        while True:
-            if (
-                self.get_token_count(convo_id) > self.truncate_limit
-                and len(self.conversation[convo_id]) > 1
-            ):
-                # Don't remove the first message
-                self.conversation[convo_id].pop(1)
-            else:
-                break
-
-    def get_token_count(self, convo_id: str = "default") -> int:
-        """
-        Get token count
-        """
-        if self.engine not in ENGINES:
-            raise NotImplementedError(
-                f"Engine {self.engine} is not supported. Select from {ENGINES}",
-            )
-        # tiktoken.model.MODEL_TO_ENCODING["mixtral-8x7b-32768"] = "cl100k_base"
-        encoding = tiktoken.get_encoding("cl100k_base")
-
-        num_tokens = 0
-        for message in self.conversation[convo_id]:
-            # every message follows <im_start>{role/name}\n{content}<im_end>\n
-            num_tokens += 5
-            for key, value in message.items():
-                if value:
-                    num_tokens += len(encoding.encode(value))
-                if key == "name":  # if there's a name, the role is omitted
-                    num_tokens += 5  # role is always required and always 1 token
-        num_tokens += 5  # every reply is primed with <im_start>assistant
-        return num_tokens
-
-    def ask_stream(
-        self,
-        prompt: str,
-        role: str = "user",
-        convo_id: str = "default",
-        model: str = None,
-        pass_history: bool = True,
-        model_max_tokens: int = 1024,
-        **kwargs,
-    ):
-        pass_history = True
-        if convo_id not in self.conversation or pass_history == False:
-            self.reset(convo_id=convo_id)
-        self.add_to_conversation(prompt, role, convo_id=convo_id)
-        # self.__truncate_conversation(convo_id=convo_id)
-        # print(self.conversation[convo_id])
-
-        url = self.chat_url
-        headers = {
-            "Authorization": f"Bearer {kwargs.get('GROQ_API_KEY', self.api_key)}",
-            "Content-Type": "application/json",
-        }
-
-        json_post = {
-            "messages": self.conversation[convo_id] if pass_history else [{
-                "role": "user",
-                "content": prompt
-            }],
-            "model": model or self.engine,
-            "temperature": kwargs.get("temperature", self.temperature),
-            "max_tokens": model_max_tokens,
-            "top_p": kwargs.get("top_p", self.top_p),
-            "stop": None,
-            "stream": True,
-        }
-        # print("json_post", json_post)
-        # print(os.environ.get("GPT_ENGINE"), model, self.engine)
-
-        try:
-            response = self.session.post(
-                url,
-                headers=headers,
-                json=json_post,
-                timeout=kwargs.get("timeout", self.timeout),
-                stream=True,
-            )
-        except ConnectionError:
-            print("连接错误，请检查服务器状态或网络连接。")
-            return
-        except requests.exceptions.ReadTimeout:
-            print("请求超时，请检查网络连接或增加超时时间。{e}")
-            return
-        except Exception as e:
-            print(f"发生了未预料的错误: {e}")
-            return
-
-        if response.status_code != 200:
-            print(response.text)
-            raise BaseException(f"{response.status_code} {response.reason} {response.text}")
-        response_role: str = "assistant"
-        full_response: str = ""
-        for line in response.iter_lines():
-            if not line:
-                continue
-            # Remove "data: "
-            # print(line.decode("utf-8"))
-            if line.decode("utf-8")[:6] == "data: ":
-                line = line.decode("utf-8")[6:]
-            else:
-                print(line.decode("utf-8"))
-                full_response = json.loads(line.decode("utf-8"))["choices"][0]["message"]["content"]
-                yield full_response
-                break
-            if line == "[DONE]":
-                break
-            resp: dict = json.loads(line)
-            # print("resp", resp)
-            choices = resp.get("choices")
-            if not choices:
-                continue
-            delta = choices[0].get("delta")
-            if not delta:
-                continue
-            if "role" in delta:
-                response_role = delta["role"]
-            if "content" in delta and delta["content"]:
-                content = delta["content"]
-                full_response += content
-                yield content
-        self.add_to_conversation(full_response, response_role, convo_id=convo_id)
-        # print(repr(self.conversation.Conversation(convo_id)))
-        # print("total tokens:", self.get_token_count(convo_id))
-
-class gemini_bot:
-    def __init__(
-        self,
-        api_key: str,
-        engine: str = os.environ.get("GPT_ENGINE") or "gemini-1.5-pro-latest",
-        temperature: float = 0.5,
-        top_p: float = 0.7,
-        chat_url: str = "https://generativelanguage.googleapis.com/v1beta/models/{model}:{stream}?key={api_key}",
-        timeout: float = 20,
-        system_prompt: str = "You are ChatGPT, a large language model trained by OpenAI. Respond conversationally",
-        **kwargs,
-    ):
-        self.api_key: str = api_key
-        self.engine: str = engine
-        self.temperature = temperature
-        self.top_p = top_p
-        self.chat_url = chat_url
-        self.timeout = timeout
-        self.session = requests.Session()
-        self.conversation: dict[str, list[dict]] = {
-            "default": [],
-        }
-        self.system_prompt = system_prompt
-
-    def add_to_conversation(
-        self,
-        message: str,
-        role: str,
-        convo_id: str = "default",
-        pass_history: bool = True,
-    ) -> None:
-        """
-        Add a message to the conversation
-        """
-
-        if convo_id not in self.conversation or pass_history == False:
-            self.reset(convo_id=convo_id)
-        # print("message", message)
-        self.conversation[convo_id].append({"role": role, "parts": [{"text": message}]})
-        # index = len(self.conversation[convo_id]) - 2
-        # if index >= 0 and self.conversation[convo_id][index]["role"] == self.conversation[convo_id][index + 1]["role"]:
-        #     self.conversation[convo_id][index]["content"] += self.conversation[convo_id][index + 1]["content"]
-        #     self.conversation[convo_id].pop(index + 1)
-
-    def reset(self, convo_id: str = "default", system_prompt: str = None) -> None:
-        """
-        Reset the conversation
-        """
-        self.conversation[convo_id] = list()
-
-    def __truncate_conversation(self, convo_id: str = "default") -> None:
-        """
-        Truncate the conversation
-        """
-        while True:
-            if (
-                self.get_token_count(convo_id) > self.truncate_limit
-                and len(self.conversation[convo_id]) > 1
-            ):
-                # Don't remove the first message
-                self.conversation[convo_id].pop(1)
-            else:
-                break
-
-    def get_token_count(self, convo_id: str = "default") -> int:
-        """
-        Get token count
-        """
-        if self.engine not in ENGINES:
-            raise NotImplementedError(
-                f"Engine {self.engine} is not supported. Select from {ENGINES}",
-            )
-        encoding = tiktoken.get_encoding("cl100k_base")
-
-        num_tokens = 0
-        for message in self.conversation[convo_id]:
-            # every message follows <im_start>{role/name}\n{content}<im_end>\n
-            num_tokens += 5
-            for key, value in message.items():
-                if value:
-                    num_tokens += len(encoding.encode(value))
-                if key == "name":  # if there's a name, the role is omitted
-                    num_tokens += 5  # role is always required and always 1 token
-        num_tokens += 5  # every reply is primed with <im_start>assistant
-        return num_tokens
-
-    def ask_stream(
-        self,
-        prompt: str,
-        role: str = "user",
-        convo_id: str = "default",
-        model: str = None,
-        pass_history: bool = True,
-        model_max_tokens: int = 4096,
-        **kwargs,
-    ):
-        pass_history = True
-        if convo_id not in self.conversation or pass_history == False:
-            self.reset(convo_id=convo_id)
-        self.add_to_conversation(prompt, role, convo_id=convo_id)
-        # self.__truncate_conversation(convo_id=convo_id)
-        # print(self.conversation[convo_id])
-
-        headers = {
-            "Content-Type": "application/json",
-        }
-
-        json_post = {
-            "contents": self.conversation[convo_id] if pass_history else [{
-                "role": "user",
-                "content": prompt
-            }],
-            "safetySettings": [
-                {
-                    "category": "HARM_CATEGORY_HARASSMENT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_NONE"
-                }
-            ],
-        }
-        print(json.dumps(json_post, indent=4, ensure_ascii=False))
-
-        url = self.chat_url.format(model=model or self.engine, stream="streamGenerateContent", api_key=self.api_key)
-
-        try:
-            response = self.session.post(
-                url,
-                headers=headers,
-                json=json_post,
-                timeout=kwargs.get("timeout", self.timeout),
-                stream=True,
-            )
-        except ConnectionError:
-            print("连接错误，请检查服务器状态或网络连接。")
-            return
-        except requests.exceptions.ReadTimeout:
-            print("请求超时，请检查网络连接或增加超时时间。{e}")
-            return
-        except Exception as e:
-            print(f"发生了未预料的错误: {e}")
-            return
-
-        if response.status_code != 200:
-            print(response.text)
-            raise BaseException(f"{response.status_code} {response.reason} {response.text}")
-        response_role: str = "model"
-        full_response: str = ""
-        try:
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                line = line.decode("utf-8")
-                if line and '\"text\": \"' in line:
-                    content = line.split('\"text\": \"')[1][:-1]
-                    content = "\n".join(content.split("\\n"))
-                    full_response += content
-                    yield content
-        except requests.exceptions.ChunkedEncodingError as e:
-            print("Chunked Encoding Error occurred:", e)
-        except Exception as e:
-            print("An error occurred:", e)
-
-        self.add_to_conversation(full_response, response_role, convo_id=convo_id)
