@@ -64,24 +64,6 @@ def function_to_json(func) -> dict:
         },
     }
 
-PLUGINS = {
-    "SEARCH" : (os.environ.get('SEARCH', "True") == "False") == False,
-    "URL"    : (os.environ.get('URL', "True") == "False") == False,
-    "ARXIV"  : (os.environ.get('ARXIV', "False") == "False") == False,
-    "CODE"   : (os.environ.get('CODE', "False") == "False") == False,
-    "IMAGE"  : (os.environ.get('IMAGE', "False") == "False") == False,
-    "DATE"   : (os.environ.get('DATE', "False") == "False") == False,
-}
-
-function_call_list = {
-    "SEARCH": function_to_json(get_search_results)["function"],
-    "URL": function_to_json(get_url_content)["function"],
-    "IMAGE": function_to_json(generate_image)["function"],
-    "ARXIV": function_to_json(download_read_arxiv_pdf)["function"],
-    "CODE": function_to_json(run_python_script)["function"],
-    "DATE": function_to_json(get_date_time_weekday)["function"],
-}
-
 def gpt2claude_tools_json(json_dict):
     import copy
     json_dict = copy.deepcopy(json_dict)
@@ -105,8 +87,6 @@ def gpt2claude_tools_json(json_dict):
             "type": "auto"
         }
     return json_dict
-
-claude_tools_list = {f"{key}": gpt2claude_tools_json(function_call_list[key]) for key in function_call_list.keys()}
 
 async def get_tools_result_async(function_call_name, function_full_response, function_call_max_tokens, engine, robot, api_key, api_url, use_plugins, model, add_message, convo_id, language):
     function_response = ""
@@ -144,8 +124,6 @@ async def get_tools_result_async(function_call_name, function_full_response, fun
     if function_call_name == "get_url_content":
         url = json.loads(function_full_response)["url"]
         print("\n\nurl", url)
-        # function_response = jina_ai_Web_crawler(url)
-        # function_response = Web_crawler(url)
         function_response = get_url_content(url)
         function_response, text_len = cut_message(function_response, function_call_max_tokens, engine)
     if function_call_name == "generate_image":
@@ -171,3 +149,23 @@ async def get_tools_result_async(function_call_name, function_full_response, fun
     )
     yield function_response
     # return function_response
+
+PLUGINS = {
+    "SEARCH" : (os.environ.get('SEARCH', "True") == "False") == False,
+    "URL"    : (os.environ.get('URL', "True") == "False") == False,
+    "ARXIV"  : (os.environ.get('ARXIV', "False") == "False") == False,
+    "CODE"   : (os.environ.get('CODE', "False") == "False") == False,
+    "IMAGE"  : (os.environ.get('IMAGE', "False") == "False") == False,
+    "DATE"   : (os.environ.get('DATE', "False") == "False") == False,
+}
+
+function_call_list = {
+    "SEARCH": function_to_json(get_search_results)["function"],
+    "URL": function_to_json(get_url_content)["function"],
+    "IMAGE": function_to_json(generate_image)["function"],
+    "ARXIV": function_to_json(download_read_arxiv_pdf)["function"],
+    "CODE": function_to_json(run_python_script)["function"],
+    "DATE": function_to_json(get_date_time_weekday)["function"],
+}
+
+claude_tools_list = {f"{key}": gpt2claude_tools_json(function_call_list[key]) for key in function_call_list.keys()}
