@@ -14,6 +14,7 @@ from .base import BaseLLM
 from ..plugins import PLUGINS, get_tools_result_async, function_call_list
 from ..utils.scripts import check_json, safe_get, async_generator_to_sync
 from ..core.request import prepare_request_payload
+from ..core.response import fetch_response_stream
 
 def get_filtered_keys_from_object(obj: object, *keys: str) -> Set[str]:
     """
@@ -232,9 +233,9 @@ class chatgpt(BaseLLM):
         # print("request_data", json.dumps(request_data, indent=4, ensure_ascii=False))
 
         # 调用核心模块的 prepare_request_payload 函数
-        url, headers, json_post_body = await prepare_request_payload(provider, request_data)
+        url, headers, json_post_body, engine_type = await prepare_request_payload(provider, request_data)
 
-        return json_post_body
+        return url, headers, json_post_body, engine_type
 
     async def _process_stream_response(
         self,
@@ -466,23 +467,23 @@ class chatgpt(BaseLLM):
         json_post = None
         async def get_post_body_async():
             nonlocal json_post
-            json_post = await self.get_post_body(prompt, role, convo_id, model, pass_history, **kwargs)
-            return json_post
+            url, headers, json_post, engine_type = await self.get_post_body(prompt, role, convo_id, model, pass_history, **kwargs)
+            return url, headers, json_post
 
         # 替换原来的获取请求体的代码
         # json_post = next(async_generator_to_sync(get_post_body_async()))
         try:
-            json_post = asyncio.run(get_post_body_async())
+            url, headers, json_post, engine_type = asyncio.run(get_post_body_async())
         except RuntimeError:
             # 如果已经在事件循环中，则使用不同的方法
             loop = asyncio.get_event_loop()
-            json_post = loop.run_until_complete(get_post_body_async())
+            url, headers, json_post, engine_type = loop.run_until_complete(get_post_body_async())
 
         self.truncate_conversation(convo_id=convo_id)
 
         # 打印日志
         if self.print_log:
-            print("api_url", kwargs.get('api_url', self.api_url.chat_url))
+            print("api_url", kwargs.get('api_url', self.api_url.chat_url), url)
             print("api_key", kwargs.get('api_key', self.api_key))
 
         # 发送请求并处理响应
@@ -491,15 +492,37 @@ class chatgpt(BaseLLM):
                 replaced_text = json.loads(re.sub(r';base64,([A-Za-z0-9+/=]+)', ';base64,***', json.dumps(json_post)))
                 print(json.dumps(replaced_text, indent=4, ensure_ascii=False))
 
-            response = None
             try:
-                response = self.session.post(
-                    kwargs.get('api_url', self.api_url.chat_url),
-                    headers={"Authorization": f"Bearer {kwargs.get('api_key', self.api_key)}"},
-                    json=json_post,
-                    timeout=kwargs.get("timeout", self.timeout),
-                    stream=True,
-                )
+                # 改进处理方式，创建一个内部异步函数来处理异步调用
+                async def process_async():
+                    # 异步调用 fetch_response_stream
+                    async_generator = fetch_response_stream(
+                        self.aclient,
+                        url,
+                        headers,
+                        json_post,
+                        engine_type,
+                        model or self.engine,
+                    )
+                    # 异步处理响应流
+                    async for chunk in self._process_stream_response(
+                        async_generator,
+                        convo_id=convo_id,
+                        function_name=function_name,
+                        total_tokens=total_tokens,
+                        function_arguments=function_arguments,
+                        function_call_id=function_call_id,
+                        model=model,
+                        language=language,
+                        system_prompt=system_prompt,
+                        pass_history=pass_history,
+                        is_async=True,
+                        **kwargs
+                    ):
+                        yield chunk
+
+                # 将异步函数转换为同步生成器
+                return async_generator_to_sync(process_async())
             except ConnectionError:
                 print("连接错误，请检查服务器状态或网络连接。")
                 return
@@ -509,45 +532,11 @@ class chatgpt(BaseLLM):
             except Exception as e:
                 print(f"发生了未预料的错误：{e}")
                 if "Invalid URL" in str(e):
-                    e = "You have entered an invalid API URL, please use the correct URL and use the `/start` command to set the API URL again. Specific error is as follows:\n\n" + str(e)
+                    e = "您输入了无效的API URL，请使用正确的URL并使用`/start`命令重新设置API URL。具体错误如下：\n\n" + str(e)
                     raise Exception(f"{e}")
-
-            # 处理错误响应
-            if response is not None:
-                if response.status_code in (400, 422, 503):
-                    json_post, should_retry = self._handle_response_error_sync(response, json_post)
-                    if should_retry:
-                        continue
-
-                if response.status_code == 200:
-                    if "is not possible because the prompts occupy" in response.text or response.text == "":
-                        json_post, should_retry = self._handle_response_error_sync(response, json_post)
-                        if should_retry:
-                            continue
-                    else:
-                        break
-
-        # 检查响应状态
-        if response != None and response.status_code != 200:
-            raise Exception(f"{response.status_code} {response.reason} {response.text[:400]}")
-        if response is None:
-            raise Exception(f"response is None, please check the connection or network.")
-
-        # 处理响应流
-        return async_generator_to_sync(self._process_stream_response(
-            response.iter_lines(),
-            convo_id=convo_id,
-            function_name=function_name,
-            total_tokens=total_tokens,
-            function_arguments=function_arguments,
-            function_call_id=function_call_id,
-            model=model,
-            language=language,
-            system_prompt=system_prompt,
-            pass_history=pass_history,
-            is_async=False,
-            **kwargs
-        ))
+                # 最后一次重试失败，向上抛出异常
+                if _ == 2:
+                    raise Exception(f"{e}")
 
     async def ask_stream_async(
         self,
@@ -574,12 +563,15 @@ class chatgpt(BaseLLM):
         self.add_to_conversation(prompt, role, convo_id=convo_id, function_name=function_name, total_tokens=total_tokens, function_arguments=function_arguments, pass_history=pass_history, function_call_id=function_call_id)
 
         # 获取请求体
-        json_post = await self.get_post_body(prompt, role, convo_id, model, pass_history, **kwargs)
+        url, headers, json_post, engine_type = await self.get_post_body(prompt, role, convo_id, model, pass_history, **kwargs)
         self.truncate_conversation(convo_id=convo_id)
 
         # 打印日志
         if self.print_log:
+            print("api_url", kwargs.get('api_url', self.api_url.chat_url) == url)
             print("api_url", kwargs.get('api_url', self.api_url.chat_url))
+            print("api_url", url)
+            # print("headers", headers)
             print("api_key", kwargs.get('api_key', self.api_key))
 
         # 发送请求并处理响应
@@ -589,43 +581,44 @@ class chatgpt(BaseLLM):
                 print(json.dumps(replaced_text, indent=4, ensure_ascii=False))
 
             try:
-                async with self.aclient.stream(
-                    "post",
-                    self.api_url.chat_url,
-                    headers={"Authorization": f"Bearer {kwargs.get('api_key', self.api_key)}"},
-                    json=json_post,
-                    timeout=kwargs.get("timeout", self.timeout),
-                ) as response:
-                    if response is None:
-                        raise Exception("Response is None, please check the connection or network.")
+                # 使用fetch_response_stream处理响应
+                generator = fetch_response_stream(
+                    self.aclient,
+                    url,
+                    headers,
+                    json_post,
+                    engine_type,
+                    model or self.engine,
+                )
+                # if isinstance(chunk, dict) and "error" in chunk:
+                #     # 处理错误响应
+                #     if chunk["status_code"] in (400, 422, 503):
+                #         json_post, should_retry = await self._handle_response_error(
+                #             type('Response', (), {'status_code': chunk["status_code"], 'text': json.dumps(chunk["details"]), 'aread': lambda: asyncio.sleep(0)}),
+                #             json_post
+                #         )
+                #         if should_retry:
+                #             break  # 跳出内部循环，继续外部循环重试
+                #     raise Exception(f"{chunk['status_code']} {chunk['error']} {chunk['details']}")
 
-                    # 处理错误响应
-                    if response.status_code in (400, 422, 503):
-                        json_post, should_retry = await self._handle_response_error(response, json_post)
-                        if should_retry:
-                            continue
+                # 处理正常响应
+                async for processed_chunk in self._process_stream_response(
+                    generator,
+                    convo_id=convo_id,
+                    function_name=function_name,
+                    total_tokens=total_tokens,
+                    function_arguments=function_arguments,
+                    function_call_id=function_call_id,
+                    model=model,
+                    language=language,
+                    system_prompt=system_prompt,
+                    pass_history=pass_history,
+                    is_async=True,
+                    **kwargs
+                ):
+                    yield processed_chunk
 
-                    if response.status_code != 200:
-                        await response.aread()
-                        raise Exception(f"{response.status_code} {response.reason_phrase} {response.text[:400]}")
-
-                    # 处理响应流
-                    async for chunk in self._process_stream_response(
-                        response.aiter_lines(),
-                        convo_id=convo_id,
-                        function_name=function_name,
-                        total_tokens=total_tokens,
-                        function_arguments=function_arguments,
-                        function_call_id=function_call_id,
-                        model=model,
-                        language=language,
-                        system_prompt=system_prompt,
-                        pass_history=pass_history,
-                        is_async=True,
-                        **kwargs
-                    ):
-                        yield chunk
-
+                # 成功处理，跳出重试循环
                 break
             except Exception as e:
                 print(f"发生了未预料的错误：{e}")
@@ -634,7 +627,9 @@ class chatgpt(BaseLLM):
                 if "Invalid URL" in str(e):
                     e = "您输入了无效的API URL，请使用正确的URL并使用`/start`命令重新设置API URL。具体错误如下：\n\n" + str(e)
                     raise Exception(f"{e}")
-                raise Exception(f"{e}")
+                # 最后一次重试失败，向上抛出异常
+                if _ == 2:
+                    raise Exception(f"{e}")
 
     async def ask_async(
         self,
