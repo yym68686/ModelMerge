@@ -3,6 +3,7 @@ import re
 import json
 import copy
 import httpx
+import asyncio
 import requests
 from typing import Set
 from typing import Union
@@ -465,8 +466,17 @@ class chatgpt(BaseLLM):
         json_post = None
         async def get_post_body_async():
             nonlocal json_post
-            return await self.get_post_body(prompt, role, convo_id, model, pass_history, **kwargs)
-        json_post = next(async_generator_to_sync(get_post_body_async()))
+            json_post = await self.get_post_body(prompt, role, convo_id, model, pass_history, **kwargs)
+            return json_post
+
+        # 替换原来的获取请求体的代码
+        # json_post = next(async_generator_to_sync(get_post_body_async()))
+        try:
+            json_post = asyncio.run(get_post_body_async())
+        except RuntimeError:
+            # 如果已经在事件循环中，则使用不同的方法
+            loop = asyncio.get_event_loop()
+            json_post = loop.run_until_complete(get_post_body_async())
 
         self.truncate_conversation(convo_id=convo_id)
 
