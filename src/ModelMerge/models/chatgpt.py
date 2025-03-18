@@ -468,7 +468,7 @@ class chatgpt(BaseLLM):
         async def get_post_body_async():
             nonlocal json_post
             url, headers, json_post, engine_type = await self.get_post_body(prompt, role, convo_id, model, pass_history, **kwargs)
-            return url, headers, json_post
+            return url, headers, json_post, engine_type
 
         # 替换原来的获取请求体的代码
         # json_post = next(async_generator_to_sync(get_post_body_async()))
