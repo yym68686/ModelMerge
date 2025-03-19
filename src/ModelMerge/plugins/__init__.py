@@ -1,29 +1,31 @@
 import os
-import importlib
 import pkgutil
+import importlib
 
-# 手动导入 config 和 registry，因为我们仍然需要它们
-from .config import *
-from .registry import registry
+# 首先导入registry，因为其他模块中的装饰器依赖它
+from .registry import registry, register_tool, register_agent
 
-# 自动导入当前目录下所有的 .py 文件，但排除 config.py 和 registry.py
+# 自动导入当前目录下所有的插件模块
 excluded_modules = ['config', 'registry', '__init__']
 current_dir = os.path.dirname(__file__)
 
+# 先导入所有模块，确保装饰器被执行
 for _, module_name, _ in pkgutil.iter_modules([current_dir]):
     if module_name not in excluded_modules:
-        module = importlib.import_module(f'.{module_name}', package=__name__)
-        # 导入模块中的所有内容
-        if hasattr(module, '__all__'):
-            all_names = module.__all__
-        else:
-            all_names = [name for name in dir(module) if not name.startswith('_')]
+        importlib.import_module(f'.{module_name}', package=__name__)
 
-        for name in all_names:
-            globals()[name] = getattr(module, name)
+# 然后从config导入必要的定义
+from .config import *
+
+# 确保将所有工具函数添加到全局名称空间
+for tool_name, tool_func in registry.tools.items():
+    globals()[tool_name] = tool_func
 
 __all__ = [
     'PLUGINS',
     'function_call_list',
     'get_tools_result_async',
+    'registry',
+    'register_tool',
+    'register_agent',
 ] + list(registry.tools.keys())

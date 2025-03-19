@@ -2,19 +2,14 @@ import os
 import json
 import inspect
 
+from .registry import registry
 from ..utils.scripts import cut_message
 from ..utils.prompt import search_key_word_prompt, arxiv_doc_user_prompt
-from .registry import registry
-
-# 明确导入需要的函数，而不是使用通配符导入
-from .image import generate_image
-from .today import get_date_time_weekday
-from .run_python import run_python_script
-from .arXiv import download_read_arxiv_pdf
-from .websearch import get_search_results, get_url_content
 
 async def get_tools_result_async(function_call_name, function_full_response, function_call_max_tokens, engine, robot, api_key, api_url, use_plugins, model, add_message, convo_id, language):
     function_response = ""
+    if function_call_name in registry.tools:
+        function_to_call = registry.tools[function_call_name]
     if function_call_name == "get_search_results":
         prompt = json.loads(function_full_response)["query"]
         yield "message_search_stage_1"
@@ -25,7 +20,7 @@ async def get_tools_result_async(function_call_name, function_full_response, fun
         keywords = [prompt] + keywords
         keywords = keywords[:3]
         print("select keywords", keywords)
-        async for chunk in get_search_results(keywords):
+        async for chunk in function_to_call(keywords):
             if type(chunk) == str:
                 yield chunk
             else:
@@ -49,24 +44,24 @@ async def get_tools_result_async(function_call_name, function_full_response, fun
     if function_call_name == "get_url_content":
         url = json.loads(function_full_response)["url"]
         print("\n\nurl", url)
-        function_response = get_url_content(url)
+        function_response = function_to_call(url)
         function_response, text_len = cut_message(function_response, function_call_max_tokens, engine)
     if function_call_name == "generate_image":
         prompt = json.loads(function_full_response)["text"]
-        function_response = generate_image(prompt)
+        function_response = function_to_call(prompt)
         function_response, text_len = cut_message(function_response, function_call_max_tokens, engine)
     if function_call_name == "download_read_arxiv_pdf":
         add_message(arxiv_doc_user_prompt, "user", convo_id=convo_id)
         # add_message(arxiv_doc_assistant_prompt, "assistant", convo_id=convo_id)
         prompt = json.loads(function_full_response)["arxiv_id"]
-        function_response = download_read_arxiv_pdf(prompt)
+        function_response = function_to_call(prompt)
         function_response, text_len = cut_message(function_response, function_call_max_tokens, engine)
     if function_call_name == "run_python_script":
         prompt = json.loads(function_full_response)["code"]
-        function_response = await run_python_script(prompt)
+        function_response = await function_to_call(prompt)
         function_response, text_len = cut_message(function_response, function_call_max_tokens, engine)
     if function_call_name == "get_date_time_weekday":
-        function_response = get_date_time_weekday()
+        function_response = function_to_call()
         function_response, text_len = cut_message(function_response, function_call_max_tokens, engine)
 
     function_response = (
