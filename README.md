@@ -78,8 +78,6 @@ The plugin-related code is all in the ModelMerge git submodule of this repositor
 
 1. Create a new Python file in the `ModelMerge/src/ModelMerge/plugins` directory, for example, `myplugin.py`. Register the plugin by adding the `@register_tool()` decorator above the function. Import `register_tool` with `from .registry import register_tool`.
 
-2. Finally, add the plugin call code to the `get_tools_result_async` function in `ModelMerge/src/ModelMerge/plugins/config.py`. When the bot needs to call the plugin, it will call this function. You need to add the plugin call code in this function.
-
 After completing the above steps, your plugin is ready to use. 🎉
 
 ## License

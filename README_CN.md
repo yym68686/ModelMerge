@@ -78,8 +78,6 @@ bot = chatgpt(api_key="{YOUR_API_KEY}", engine="gpt-4o", use_plugins=False)
 
 1. 在 `ModelMerge/src/ModelMerge/plugins` 目录下创建一个新的 Python 文件，例如 `myplugin.py`。通过在函数上面添加 `@register_tool()` 装饰器注册插件。`register_tool` 通过 `from .registry import register_tool` 导入。
 
-2. 最后，在 `ModelMerge/src/ModelMerge/plugins/config.py` 里面的函数 `get_tools_result_async` 添加插件调用的代码，当机器人需要调用插件的时候，会调用这个函数。你需要在这个函数里面添加插件的调用代码。
-
 完成上面的步骤，你的插件就可以使用了。🎉
 
 ## 许可证
