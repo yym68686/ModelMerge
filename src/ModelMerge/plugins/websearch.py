@@ -7,6 +7,7 @@ import time as record_time
 from itertools import islice
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
+from .registry import register_tool
 
 class ThreadWithReturnValue(threading.Thread):
     def run(self):
@@ -113,6 +114,7 @@ def jina_ai_Web_crawler(url: str, isSearch=False) -> str:
     # print(result + "\n\n")
     return result
 
+@register_tool()
 def get_url_content(url: str) -> str:
     """
     获取 url 的网页内容，以 markdown 格式返回给用户
@@ -295,6 +297,7 @@ async def get_url_text_list(keywords, search_url_num):
     # return url_text_list
 
 # Plugins 搜索入口
+@register_tool()
 async def get_search_results(query):
     """
     执行网络搜索并返回搜索结果文本

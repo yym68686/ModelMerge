@@ -1,7 +1,10 @@
-import datetime
 import pytz
+import datetime
+
+from .registry import register_tool
 
 # Plugins 获取日期时间
+@register_tool()
 def get_date_time_weekday():
     """
     获取当前日期时间及星期几

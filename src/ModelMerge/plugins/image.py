@@ -2,6 +2,7 @@ import os
 import requests
 import json
 from ..models.base import BaseLLM
+from .registry import register_tool
 
 API = os.environ.get('API', None)
 API_URL = os.environ.get('API_URL', None)
@@ -55,6 +56,7 @@ class dalle3(BaseLLM):
         url = json_data["data"][0]["url"]
         yield url
 
+@register_tool()
 def generate_image(text):
     """
     生成图像

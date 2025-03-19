@@ -2,91 +2,16 @@ import os
 import json
 import inspect
 
+from ..utils.scripts import cut_message
+from ..utils.prompt import search_key_word_prompt, arxiv_doc_user_prompt
+from .registry import registry
+
 # 明确导入需要的函数，而不是使用通配符导入
-from .websearch import get_search_results, get_url_content
-from .arXiv import download_read_arxiv_pdf
 from .image import generate_image
 from .today import get_date_time_weekday
 from .run_python import run_python_script
-
-from ..utils.scripts import cut_message
-from ..utils.prompt import search_key_word_prompt, arxiv_doc_user_prompt
-
-def function_to_json(func) -> dict:
-    """
-    将Python函数转换为JSON可序列化的字典，描述函数的签名，包括名称、描述和参数。
-
-    Args:
-        func: 要转换的函数
-
-    Returns:
-        表示函数签名的JSON格式字典
-    """
-    type_map = {
-        str: "string",
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-        type(None): "null",
-    }
-
-    try:
-        signature = inspect.signature(func)
-    except ValueError as e:
-        raise ValueError(f"获取函数{func.__name__}签名失败: {str(e)}")
-
-    parameters = {}
-    for param in signature.parameters.values():
-        try:
-            if param.annotation == inspect._empty:
-                parameters[param.name] = {"type": "string"}
-            else:
-                parameters[param.name] = {"type": type_map.get(param.annotation, "string")}
-        except KeyError as e:
-            raise KeyError(f"未知类型注解 {param.annotation} 用于参数 {param.name}: {str(e)}")
-
-    required = [
-        param.name
-        for param in signature.parameters.values()
-        if param.default == inspect._empty
-    ]
-
-    return {
-        "type": "function",
-        "function": {
-            "name": func.__name__,
-            "description": func.__doc__ or "",
-            "parameters": {
-                "type": "object",
-                "properties": parameters,
-                "required": required,
-            },
-        },
-    }
-
-def gpt2claude_tools_json(json_dict):
-    import copy
-    json_dict = copy.deepcopy(json_dict)
-    keys_to_change = {
-        "parameters": "input_schema",
-    }
-    for old_key, new_key in keys_to_change.items():
-        if old_key in json_dict:
-            if new_key:
-                json_dict[new_key] = json_dict.pop(old_key)
-            else:
-                json_dict.pop(old_key)
-        else:
-            if new_key and "description" in json_dict.keys():
-                json_dict[new_key] = {
-                    "type": "object",
-                    "properties": {}
-                }
-    if "tools" in json_dict.keys():
-        json_dict["tool_choice"] = {
-            "type": "auto"
-        }
-    return json_dict
+from .arXiv import download_read_arxiv_pdf
+from .websearch import get_search_results, get_url_content
 
 async def get_tools_result_async(function_call_name, function_full_response, function_call_max_tokens, engine, robot, api_key, api_url, use_plugins, model, add_message, convo_id, language):
     function_response = ""
@@ -150,22 +75,88 @@ async def get_tools_result_async(function_call_name, function_full_response, fun
     yield function_response
     # return function_response
 
+def function_to_json(func) -> dict:
+    """
+    将Python函数转换为JSON可序列化的字典，描述函数的签名，包括名称、描述和参数。
+
+    Args:
+        func: 要转换的函数
+
+    Returns:
+        表示函数签名的JSON格式字典
+    """
+    type_map = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        type(None): "null",
+    }
+
+    try:
+        signature = inspect.signature(func)
+    except ValueError as e:
+        raise ValueError(f"获取函数{func.__name__}签名失败: {str(e)}")
+
+    parameters = {}
+    for param in signature.parameters.values():
+        try:
+            if param.annotation == inspect._empty:
+                parameters[param.name] = {"type": "string"}
+            else:
+                parameters[param.name] = {"type": type_map.get(param.annotation, "string")}
+        except KeyError as e:
+            raise KeyError(f"未知类型注解 {param.annotation} 用于参数 {param.name}: {str(e)}")
+
+    required = [
+        param.name
+        for param in signature.parameters.values()
+        if param.default == inspect._empty
+    ]
+
+    return {
+        "name": func.__name__,
+        "description": func.__doc__ or "",
+        "parameters": {
+            "type": "object",
+            "properties": parameters,
+            "required": required,
+        },
+    }
+
+def gpt2claude_tools_json(json_dict):
+    import copy
+    json_dict = copy.deepcopy(json_dict)
+    keys_to_change = {
+        "parameters": "input_schema",
+    }
+    for old_key, new_key in keys_to_change.items():
+        if old_key in json_dict:
+            if new_key:
+                json_dict[new_key] = json_dict.pop(old_key)
+            else:
+                json_dict.pop(old_key)
+        else:
+            if new_key and "description" in json_dict.keys():
+                json_dict[new_key] = {
+                    "type": "object",
+                    "properties": {}
+                }
+    if "tools" in json_dict.keys():
+        json_dict["tool_choice"] = {
+            "type": "auto"
+        }
+    return json_dict
+
+# 修改PLUGINS定义，使用registry中的工具
 PLUGINS = {
-    "SEARCH" : (os.environ.get('SEARCH', "True") == "False") == False,
-    "URL"    : (os.environ.get('URL', "True") == "False") == False,
-    "ARXIV"  : (os.environ.get('ARXIV', "False") == "False") == False,
-    "CODE"   : (os.environ.get('CODE', "False") == "False") == False,
-    "IMAGE"  : (os.environ.get('IMAGE', "False") == "False") == False,
-    "DATE"   : (os.environ.get('DATE', "False") == "False") == False,
+    tool_name: (os.environ.get(tool_name, "False") == "False") == False
+    for tool_name in registry.tools.keys()
 }
 
-function_call_list = {
-    "SEARCH": function_to_json(get_search_results)["function"],
-    "URL": function_to_json(get_url_content)["function"],
-    "IMAGE": function_to_json(generate_image)["function"],
-    "ARXIV": function_to_json(download_read_arxiv_pdf)["function"],
-    "CODE": function_to_json(run_python_script)["function"],
-    "DATE": function_to_json(get_date_time_weekday)["function"],
-}
+# 修改function_call_list定义，使用registry中的工具
+function_call_list = {}
+for tool_name, tool_func in registry.tools.items():
+    function_call_list[tool_name] = function_to_json(tool_func)
 
 claude_tools_list = {f"{key}": gpt2claude_tools_json(function_call_list[key]) for key in function_call_list.keys()}

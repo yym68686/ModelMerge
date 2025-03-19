@@ -1,7 +1,9 @@
 import requests
 
 from ..utils.scripts import Document_extract
+from .registry import register_tool
 
+@register_tool()
 def download_read_arxiv_pdf(arxiv_id: str) -> str:
     """
     下载指定arXiv ID的论文PDF并提取其内容。

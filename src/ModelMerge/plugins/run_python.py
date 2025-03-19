@@ -1,9 +1,9 @@
 import os
+import ast
 import asyncio
 import logging
 import tempfile
-import ast
-import builtins
+from .registry import register_tool
 
 def get_dangerous_attributes(node):
     # 简单的代码审查，检查是否包含某些危险关键词
@@ -40,6 +40,7 @@ def check_code_safety(code):
     except SyntaxError:
         return False
 
+@register_tool()
 async def run_python_script(code):
     """
     执行 Python 代码
