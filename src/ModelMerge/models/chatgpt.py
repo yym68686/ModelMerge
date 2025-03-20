@@ -380,7 +380,8 @@ class chatgpt(BaseLLM):
 
         # 处理函数调用
         if need_function_call:
-            print("function_full_response", function_full_response)
+            if self.print_log:
+                print("function_full_response", function_full_response)
             function_full_response = check_json(function_full_response)
             function_response = ""
 
@@ -394,7 +395,8 @@ class chatgpt(BaseLLM):
                 function_call_max_tokens = self.truncate_limit - 1000
                 if function_call_max_tokens <= 0:
                     function_call_max_tokens = int(self.truncate_limit / 2)
-                print("\033[32m function_call", function_call_name, "max token:", function_call_max_tokens, "\033[0m")
+                if self.print_log:
+                    print("\033[32m function_call", function_call_name, "max token:", function_call_max_tokens, "\033[0m")
 
                 # 处理函数调用结果
                 if is_async:
