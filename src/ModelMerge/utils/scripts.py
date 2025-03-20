@@ -94,7 +94,7 @@ def Document_extract(docurl, docpath=None, engine = None):
             "</document>"
         ).format(text)
     if filename and filename[-3:] == "jpg" or filename[-3:] == "png" or filename[-4:] == "jpeg":
-        prompt = get_image_message(docurl, [], engine)
+        prompt = get_image_message(docurl, engine)
     if filename and filename[-3:] == "wav" or filename[-3:] == "mp3":
         with open(docpath, "rb") as file:
             file_bytes = file.read()

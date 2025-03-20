@@ -390,7 +390,7 @@ class chatgpt(BaseLLM):
             else:
                 self.function_calls_counter[function_call_name] += 1
 
-            has_args = safe_get(self.function_call_list, function_call_name, "parameters", "properties", default=False)
+            has_args = safe_get(self.function_call_list, function_call_name, "parameters", "required", default=False)
             if self.function_calls_counter[function_call_name] <= self.function_call_max_loop and (function_full_response != "{}" or not has_args):
                 function_call_max_tokens = self.truncate_limit - 1000
                 if function_call_max_tokens <= 0:
