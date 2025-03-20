@@ -28,4 +28,5 @@ __all__ = [
     'registry',
     'register_tool',
     'register_agent',
+    'update_tools_config',
 ] + list(registry.tools.keys())

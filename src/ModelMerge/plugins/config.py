@@ -142,17 +142,36 @@ def gpt2claude_tools_json(json_dict):
         }
     return json_dict
 
+# print("registry.tools", json.dumps(registry.tools_info.get('get_time', {}), indent=4, ensure_ascii=False))
 # print("registry.tools", json.dumps(registry.tools_info['run_python_script'].to_dict(), indent=4, ensure_ascii=False))
 
 # 修改PLUGINS定义，使用registry中的工具
-PLUGINS = {
-    tool_name: (os.environ.get(tool_name, "False") == "False") == False
-    for tool_name in registry.tools.keys()
-}
+def get_plugins():
+    return {
+        tool_name: (os.environ.get(tool_name, "False") == "False") == False
+        for tool_name in registry.tools.keys()
+    }
 
 # 修改function_call_list定义，使用registry中的工具
-function_call_list = {}
-for tool_name, tool_func in registry.tools.items():
-    function_call_list[tool_name] = function_to_json(tool_func)
+def get_function_call_list():
+    function_list = {}
+    for tool_name, tool_func in registry.tools.items():
+        function_list[tool_name] = function_to_json(tool_func)
+    return function_list
 
-claude_tools_list = {f"{key}": gpt2claude_tools_json(function_call_list[key]) for key in function_call_list.keys()}
+def get_claude_tools_list():
+    function_list = get_function_call_list()
+    return {f"{key}": gpt2claude_tools_json(function_list[key]) for key in function_list.keys()}
+
+# 初始化默认配置
+PLUGINS = get_plugins()
+function_call_list = get_function_call_list()
+claude_tools_list = get_claude_tools_list()
+
+# 动态更新工具函数配置
+def update_tools_config():
+    global PLUGINS, function_call_list, claude_tools_list
+    PLUGINS = get_plugins()
+    function_call_list = get_function_call_list()
+    claude_tools_list = get_claude_tools_list()
+    return PLUGINS, function_call_list, claude_tools_list

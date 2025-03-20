@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 from .base import BaseLLM
-from ..plugins import PLUGINS, get_tools_result_async, function_call_list
+from ..plugins import PLUGINS, get_tools_result_async, function_call_list, update_tools_config
 from ..utils.scripts import check_json, safe_get, async_generator_to_sync
 from ..core.request import prepare_request_payload
 from ..core.response import fetch_response_stream
@@ -76,23 +76,32 @@ class chatgpt(BaseLLM):
         self.function_calls_counter = {}
         self.function_call_max_loop = 3
 
+
+        # 注册和处理传入的工具
+        self._register_tools(tools)
+
+        if self.tokens_usage["default"] > self.max_tokens:
+            raise Exception("System prompt is too long")
+
+    def _register_tools(self, tools):
+        """动态注册工具函数并更新配置"""
+
         self.plugins = copy.deepcopy(PLUGINS)
+        self.function_call_list = copy.deepcopy(function_call_list)
+        # 如果有新工具，需要注册到registry并更新配置
+        self.plugins, self.function_call_list, _ = update_tools_config()
 
         if isinstance(tools, list):
-            self.tools = tools
+            self.tools = tools if tools else []
         else:
-            self.tools = [tools]
+            self.tools = [tools] if tools else []
 
         for tool in self.tools:
-            # 检查工具是否为函数对象，如果是则使用函数名称
             tool_name = tool.__name__ if callable(tool) else str(tool)
             if tool_name in self.plugins:
                 self.plugins[tool_name] = True
             else:
                 raise ValueError(f"Tool {tool_name} not found in plugins")
-
-        if self.tokens_usage["default"] > self.max_tokens:
-            raise Exception("System prompt is too long")
 
     def add_to_conversation(
         self,
@@ -238,7 +247,7 @@ class chatgpt(BaseLLM):
             for item in plugins_status.keys():
                 try:
                     if plugins_status[item]:
-                        tools_request_body.append({"type": "function", "function": function_call_list[item]})
+                        tools_request_body.append({"type": "function", "function": self.function_call_list[item]})
                 except:
                     pass
             if tools_request_body:
@@ -380,7 +389,8 @@ class chatgpt(BaseLLM):
             else:
                 self.function_calls_counter[function_call_name] += 1
 
-            if self.function_calls_counter[function_call_name] <= self.function_call_max_loop and (function_full_response != "{}" or function_call_name == "get_date_time_weekday"):
+            has_args = safe_get(self.function_call_list, function_call_name, "parameters", "properties", default=False)
+            if self.function_calls_counter[function_call_name] <= self.function_call_max_loop and (function_full_response != "{}" or not has_args):
                 function_call_max_tokens = self.truncate_limit - 1000
                 if function_call_max_tokens <= 0:
                     function_call_max_tokens = int(self.truncate_limit / 2)
