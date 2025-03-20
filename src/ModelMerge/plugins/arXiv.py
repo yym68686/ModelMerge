@@ -4,7 +4,7 @@ from ..utils.scripts import Document_extract
 from .registry import register_tool
 
 @register_tool()
-def download_read_arxiv_pdf(arxiv_id: str) -> str:
+async def download_read_arxiv_pdf(arxiv_id: str) -> str:
     """
     下载指定arXiv ID的论文PDF并提取其内容。
 
@@ -30,7 +30,7 @@ def download_read_arxiv_pdf(arxiv_id: str) -> str:
         with open(save_path, 'wb') as file:
             file.write(response.content)
         print(f'PDF下载成功，保存路径: {save_path}')
-        return Document_extract(None, save_path)
+        return await Document_extract(None, save_path)
     else:
         print(f'下载失败，状态码: {response.status_code}')
         return "文件下载失败"
