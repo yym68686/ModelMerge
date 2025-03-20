@@ -6,7 +6,7 @@ import httpx
 import asyncio
 import requests
 from typing import Set
-from typing import Union
+from typing import Union, Optional, Callable
 from pathlib import Path
 
 
@@ -59,6 +59,7 @@ class chatgpt(BaseLLM):
         truncate_limit: int = None,
         use_plugins: bool = True,
         print_log: bool = False,
+        tools: Optional[Union[list, str, Callable]] = [],
     ) -> None:
         """
         Initialize Chatbot with API key (from https://platform.openai.com/account/api-keys)
@@ -74,6 +75,21 @@ class chatgpt(BaseLLM):
         }
         self.function_calls_counter = {}
         self.function_call_max_loop = 3
+
+        self.plugins = copy.deepcopy(PLUGINS)
+
+        if isinstance(tools, list):
+            self.tools = tools
+        else:
+            self.tools = [tools]
+
+        for tool in self.tools:
+            # 检查工具是否为函数对象，如果是则使用函数名称
+            tool_name = tool.__name__ if callable(tool) else str(tool)
+            if tool_name in self.plugins:
+                self.plugins[tool_name] = True
+            else:
+                raise ValueError(f"Tool {tool_name} not found in plugins")
 
         if self.tokens_usage["default"] > self.max_tokens:
             raise Exception("System prompt is too long")
@@ -216,18 +232,17 @@ class chatgpt(BaseLLM):
         }
 
         # 添加工具相关信息
-        plugins = kwargs.get("plugins", PLUGINS)
-        if not (all(value == False for value in plugins.values()) or self.use_plugins == False):
-            tools = []
-            # tools.append(copy.deepcopy(function_call_list["base"]))
-            for item in plugins.keys():
+        plugins_status = kwargs.get("plugins", self.plugins)
+        if not (all(value == False for value in plugins_status.values()) or self.use_plugins == False):
+            tools_request_body = []
+            for item in plugins_status.keys():
                 try:
-                    if plugins[item]:
-                        tools.append({"type": "function", "function": function_call_list[item]})
+                    if plugins_status[item]:
+                        tools_request_body.append({"type": "function", "function": function_call_list[item]})
                 except:
                     pass
-            if tools:
-                request_data["tools"] = tools
+            if tools_request_body:
+                request_data["tools"] = tools_request_body
                 request_data["tool_choice"] = "auto"
 
         # print("request_data", json.dumps(request_data, indent=4, ensure_ascii=False))
@@ -411,7 +426,7 @@ class chatgpt(BaseLLM):
                     function_name=function_call_name, total_tokens=total_tokens,
                     model=model or self.engine, function_arguments=function_full_response,
                     function_call_id=function_call_id, api_key=kwargs.get('api_key', self.api_key),
-                    plugins=kwargs.get("plugins", PLUGINS), system_prompt=system_prompt
+                    plugins=kwargs.get("plugins", self.plugins), system_prompt=system_prompt
                 ):
                     yield chunk
             else:
@@ -420,7 +435,7 @@ class chatgpt(BaseLLM):
                     function_name=function_call_name, total_tokens=total_tokens,
                     model=model or self.engine, function_arguments=function_full_response,
                     function_call_id=function_call_id, api_key=kwargs.get('api_key', self.api_key),
-                    plugins=kwargs.get("plugins", PLUGINS), system_prompt=system_prompt
+                    plugins=kwargs.get("plugins", self.plugins), system_prompt=system_prompt
                 ):
                     yield chunk
         else:
