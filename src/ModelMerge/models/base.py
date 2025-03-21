@@ -5,32 +5,7 @@ from pathlib import Path
 from collections import defaultdict
 
 from ..utils import prompt
-
-class BaseAPI:
-    def __init__(
-        self,
-        api_url: str = (os.environ.get("API_URL", None) or "https://api.openai.com/v1/chat/completions"),
-    ):
-        if api_url == "":
-            api_url = "https://api.openai.com/v1/chat/completions"
-        self.source_api_url: str = api_url
-        from urllib.parse import urlparse, urlunparse
-        parsed_url = urlparse(self.source_api_url)
-        if parsed_url.scheme == "":
-            raise Exception("Error: API_URL is not set")
-        if parsed_url.path != '/':
-            before_v1 = parsed_url.path.split("/v1")[0]
-        else:
-            before_v1 = ""
-        self.base_url: str = urlunparse(parsed_url[:2] + (before_v1,) + ("",) * 3)
-        self.v1_url: str = urlunparse(parsed_url[:2]+ (before_v1 + "/v1",) + ("",) * 3)
-        self.v1_models: str = urlunparse(parsed_url[:2] + (before_v1 + "/v1/models",) + ("",) * 3)
-        if parsed_url.netloc == "api.deepseek.com":
-            self.chat_url: str = urlunparse(parsed_url[:2] + ("/chat/completions",) + ("",) * 3)
-        else:
-            self.chat_url: str = urlunparse(parsed_url[:2] + (before_v1 + "/v1/chat/completions",) + ("",) * 3)
-        self.image_url: str = urlunparse(parsed_url[:2] + (before_v1 + "/v1/images/generations",) + ("",) * 3)
-        self.audio_transcriptions: str = urlunparse(parsed_url[:2] + (before_v1 + "/v1/audio/transcriptions",) + ("",) * 3)
+from ..core.utils import BaseAPI
 
 class BaseLLM:
     def __init__(

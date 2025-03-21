@@ -93,7 +93,15 @@ def jina_ai_Web_crawler(url: str, isSearch=False) -> str:
         if content_length > 5000000:
             print("Skipping large file:", url)
             return result
-        soup = BeautifulSoup(response.text.encode(response.encoding), 'lxml', from_encoding='utf-8')
+
+        # 检查内容是否为HTML
+        content_type = response.headers.get('Content-Type', '')
+        if 'text/html' in content_type or 'application/xhtml+xml' in content_type:
+            # 使用html.parser而不是lxml可能会更宽松一些
+            soup = BeautifulSoup(response.content, 'html.parser')
+        else:
+            # 对于非HTML内容，直接提取文本
+            return response.text  # 限制长度
 
         table_contents = ""
         tables = soup.find_all('table')

@@ -4,7 +4,8 @@ import json
 import requests
 
 
-from .base import BaseLLM, BaseAPI
+from .base import BaseLLM
+from ..core.utils import BaseAPI
 
 import copy
 from ..plugins import PLUGINS, get_tools_result_async, function_call_list
