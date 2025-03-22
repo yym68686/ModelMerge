@@ -1,0 +1,3 @@
+[submodule "src/aient/core"]
+	path = src/aient/core
+	url = https://github.com/yym68686/uni-api-core.git
