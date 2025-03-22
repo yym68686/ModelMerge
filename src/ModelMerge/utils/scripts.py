@@ -25,7 +25,7 @@ def cut_message(message: str, max_tokens: int, model_name: str):
     if len(encode_text) > max_tokens:
         encode_text = encode_text[:max_tokens]
         message = encoding.decode(encode_text)
-    encode_text = encoding.encode(message)
+    encode_text = encoding.encode(message, disallowed_special=())
     return message, len(encode_text)
 
 import imghdr
