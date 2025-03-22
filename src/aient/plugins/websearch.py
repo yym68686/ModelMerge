@@ -115,10 +115,11 @@ def jina_ai_Web_crawler(url: str, isSearch=False) -> str:
         if result.count("\"") > 1000:
             result = ""
     except Exception as e:
-        print('\033[31m')
-        print("error: jina_ai_Web_crawler url", url)
-        print("error", e)
-        print('\033[0m')
+        # print('\033[31m')
+        # print("error: jina_ai_Web_crawler url", url)
+        # print("error", e)
+        # print('\033[0m')
+        pass
     # print(result + "\n\n")
     return result
 
@@ -132,9 +133,9 @@ def get_url_content(url: str) -> str:
     """
     markdown_content = url_to_markdown(url)
     # print(markdown_content)
-    print('-----------------------------')
+    # print('-----------------------------')
     jina_content = jina_ai_Web_crawler(url)
-    print('-----------------------------')
+    # print('-----------------------------')
 
     # 定义评分函数
     def score_content(content):
@@ -162,17 +163,17 @@ def get_url_content(url: str) -> str:
     else:
         jina_score = score_content(jina_content)
 
-    print(f"url_to_markdown 得分： {markdown_score}")
-    print(f"jina_ai_Web_crawler 得分： {jina_score}")
+    # print(f"url_to_markdown 得分： {markdown_score}")
+    # print(f"jina_ai_Web_crawler 得分： {jina_score}")
 
     if markdown_score > jina_score:
-        print("choose: 选择 url_to_markdown 的结果")
+        # print("choose: 选择 url_to_markdown 的结果")
         return markdown_content
     elif markdown_score == jina_score and jina_score < 0:
         print("choose: 两者都无法访问")
         return ""
     else:
-        print("choose: 选择 jina_ai_Web_crawler 的结果")
+        # print("choose: 选择 jina_ai_Web_crawler 的结果")
         return jina_content
 
 def getddgsearchurl(query, max_results=4):
