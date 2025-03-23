@@ -49,10 +49,10 @@ def url_to_markdown(url):
                 body = Cleaner(javascript=True, style=True).clean_html(body)
                 return ''.join(lxml.html.tostring(c, encoding='unicode') for c in body)
         except Exception as e:
-            print('\033[31m')
-            print("error: url_to_markdown url", url)
-            print("error", e)
-            print('\033[0m')
+            # print('\033[31m')
+            # print("error: url_to_markdown url", url)
+            # print("error", e)
+            # print('\033[0m')
             return "抱歉，目前无法访问该网页。"
 
     # 将HTML转换为Markdown
