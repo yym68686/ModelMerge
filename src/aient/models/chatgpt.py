@@ -60,6 +60,7 @@ class chatgpt(BaseLLM):
         use_plugins: bool = True,
         print_log: bool = False,
         tools: Optional[Union[list, str, Callable]] = [],
+        function_call_max_loop: int = 3,
     ) -> None:
         """
         Initialize Chatbot with API key (from https://platform.openai.com/account/api-keys)
@@ -74,7 +75,7 @@ class chatgpt(BaseLLM):
             ],
         }
         self.function_calls_counter = {}
-        self.function_call_max_loop = 3
+        self.function_call_max_loop = function_call_max_loop
 
 
         # 注册和处理传入的工具
