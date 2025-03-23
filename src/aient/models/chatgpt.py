@@ -560,6 +560,8 @@ class chatgpt(BaseLLM):
             except requests.exceptions.ReadTimeout:
                 print("请求超时，请检查网络连接或增加超时时间。")
                 return
+            except httpx.RemoteProtocolError:
+                continue
             except Exception as e:
                 print(f"发生了未预料的错误：{e}")
                 if "Invalid URL" in str(e):
@@ -651,6 +653,8 @@ class chatgpt(BaseLLM):
 
                 # 成功处理，跳出重试循环
                 break
+            except httpx.RemoteProtocolError:
+                continue
             except Exception as e:
                 print(f"发生了未预料的错误：{e}")
                 import traceback
