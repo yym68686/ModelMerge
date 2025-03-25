@@ -61,6 +61,7 @@ class chatgpt(BaseLLM):
         print_log: bool = False,
         tools: Optional[Union[list, str, Callable]] = [],
         function_call_max_loop: int = 3,
+        cut_history_by_function_name: str = "",
     ) -> None:
         """
         Initialize Chatbot with API key (from https://platform.openai.com/account/api-keys)
@@ -76,6 +77,7 @@ class chatgpt(BaseLLM):
         }
         self.function_calls_counter = {}
         self.function_call_max_loop = function_call_max_loop
+        self.cut_history_by_function_name = cut_history_by_function_name
 
 
         # 注册和处理传入的工具
@@ -124,6 +126,11 @@ class chatgpt(BaseLLM):
         if function_name == "" and message and message != None:
             self.conversation[convo_id].append({"role": role, "content": message})
         elif function_name != "" and message and message != None:
+            # 删除从 cut_history_by_function_name 以后的所有历史记录
+            if function_name == self.cut_history_by_function_name:
+                matching_message = next(filter(lambda x: safe_get(x, "tool_calls", 0, "function", "name", default="") == 'get_next_pdf', self.conversation[convo_id]), None)
+                if matching_message is not None:
+                    self.conversation[convo_id] = self.conversation[convo_id][:self.conversation[convo_id].index(matching_message)]
             self.conversation[convo_id].append({
                 "role": "assistant",
                 "tool_calls": [
