@@ -591,7 +591,7 @@ class chatgpt(BaseLLM):
         function_arguments: str = "",
         function_call_id: str = "",
         language: str = "English",
-        system_prompt: str = "You are ChatGPT, a large language model trained by OpenAI. Respond conversationally",
+        system_prompt: str = None,
         **kwargs,
     ):
         """
