@@ -259,6 +259,9 @@ class chatgpt(BaseLLM):
         }
 
         # 添加工具相关信息
+        if kwargs.get("plugins", None):
+            self.plugins = kwargs.get("plugins")
+        
         plugins_status = kwargs.get("plugins", self.plugins)
         if not (all(value == False for value in plugins_status.values()) or self.use_plugins == False):
             tools_request_body = []
@@ -463,6 +466,7 @@ class chatgpt(BaseLLM):
                     function_name=function_call_name, total_tokens=total_tokens,
                     model=model or self.engine, function_arguments=function_full_response,
                     function_call_id=function_call_id, api_key=kwargs.get('api_key', self.api_key),
+                    api_url=kwargs.get('api_url', self.api_url.chat_url),
                     plugins=kwargs.get("plugins", self.plugins), system_prompt=system_prompt
                 ):
                     yield chunk
@@ -472,6 +476,7 @@ class chatgpt(BaseLLM):
                     function_name=function_call_name, total_tokens=total_tokens,
                     model=model or self.engine, function_arguments=function_full_response,
                     function_call_id=function_call_id, api_key=kwargs.get('api_key', self.api_key),
+                    api_url=kwargs.get('api_url', self.api_url.chat_url),
                     plugins=kwargs.get("plugins", self.plugins), system_prompt=system_prompt
                 ):
                     yield chunk
