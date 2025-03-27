@@ -173,6 +173,9 @@ class chatgpt(BaseLLM):
                     and type(self.conversation[convo_id][message_index + 1]["content"]) == str:
                         self.conversation[convo_id][message_index]["content"] = [self.conversation[convo_id][message_index]["content"]]
                         self.conversation[convo_id][message_index + 1]["content"] = [{"type": "text", "text": self.conversation[convo_id][message_index + 1]["content"]}]
+                    if type(self.conversation[convo_id][message_index]["content"]) == dict \
+                    and type(self.conversation[convo_id][message_index + 1]["content"]) == list:
+                        self.conversation[convo_id][message_index]["content"] = [self.conversation[convo_id][message_index]["content"]]
                     self.conversation[convo_id][message_index]["content"] += self.conversation[convo_id][message_index + 1]["content"]
                 self.conversation[convo_id].pop(message_index + 1)
                 conversation_len = conversation_len - 1
@@ -261,7 +264,7 @@ class chatgpt(BaseLLM):
         # 添加工具相关信息
         if kwargs.get("plugins", None):
             self.plugins = kwargs.get("plugins")
-        
+
         plugins_status = kwargs.get("plugins", self.plugins)
         if not (all(value == False for value in plugins_status.values()) or self.use_plugins == False):
             tools_request_body = []
