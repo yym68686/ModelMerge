@@ -231,5 +231,321 @@ def async_generator_to_sync(async_gen):
         except Exception as e:
             print(f"Error during cleanup: {e}")
 
+def parse_tools_from_cursor_prompt(text):
+    import json
+    import re
+
+    # 从 cursor_prompt 中提取 <tools> 标签内的 JSON 字符串
+    tools_match = re.search(r"<tools>\n(.*?)\n</tools>", text, re.DOTALL)
+    if tools_match:
+        tools_json_string = tools_match.group(1).strip()
+        try:
+            tools_list_data = json.loads(tools_json_string, strict=False)
+            return tools_list_data
+        except json.JSONDecodeError as e:
+            print(f"解析 JSON 时出错: {e}")
+    return []
+
+from dataclasses import dataclass
+from typing import List, Callable, Optional, TypeVar, Generic, Union, Dict, Any
+
+# 定义结果类型
+@dataclass
+class XmlMatcherResult:
+    matched: bool
+    data: str = ""
+
+# 泛型类型变量，用于 transform 的返回类型
+R = TypeVar('R')
+
+class XmlMatcher(Generic[R]):
+    def __init__(self,
+                 tag_name: str,
+                 transform: Optional[Callable[[XmlMatcherResult], R]] = None,
+                 position: int = 0):
+        self.tag_name: str = tag_name
+        self.transform: Optional[Callable[[XmlMatcherResult], R]] = transform
+        self.position: int = position
+
+        self.index: int = 0
+        self.chunks: List[XmlMatcherResult] = []
+        self.cached: List[str] = []
+        self.matched: bool = False
+        self.state: str = "TEXT"  # "TEXT", "TAG_OPEN", "TAG_CLOSE"
+        self.depth: int = 0
+        self.pointer: int = 0
+
+    def _collect(self):
+        """将缓存的字符收集到 chunks 中"""
+        if not self.cached:
+            return
+
+        data = "".join(self.cached)
+        # 检查是否需要合并到上一个 chunk
+        # 仅当当前缓存的匹配状态与上一个 chunk 相同时才合并
+        last = self.chunks[-1] if self.chunks else None
+        current_matched_state = self.matched if self.state == "TEXT" else (self.depth > 0) # 在标签解析过程中，匹配状态取决于深度
+
+        if last and last.matched == current_matched_state:
+            last.data += data
+        else:
+            # 只有当 data 不为空时才添加新的 chunk
+            if data:
+                 self.chunks.append(XmlMatcherResult(data=data, matched=current_matched_state))
+
+        self.cached = []
+
+    def _pop(self) -> List[Union[XmlMatcherResult, R]]:
+        """返回处理过的 chunks 并清空列表"""
+        chunks_to_return = self.chunks
+        self.chunks = []
+        if not self.transform:
+            # 如果没有 transform 函数，直接返回原始结果列表
+            # 需要显式类型转换，因为泛型 R 默认为 XmlMatcherResult
+            return [chunk for chunk in chunks_to_return] # type: ignore
+        # 应用 transform 函数
+        return [self.transform(chunk) for chunk in chunks_to_return]
+
+    def _update(self, chunk: str):
+        """处理输入字符串块的核心逻辑"""
+        for char in chunk:
+            current_char_processed = False # 标记当前字符是否已被状态机逻辑处理
+
+            if self.state == "TEXT":
+                if char == "<" and (self.pointer >= self.position or self.matched):
+                    self._collect()
+                    self.state = "TAG_OPEN"
+                    self.cached.append(char)
+                    self.index = 0 # 重置 index 以开始匹配标签名或跳过空格
+                    current_char_processed = True
+                # else: 保持在 TEXT 状态，字符将在循环末尾添加到 cached
+
+            elif self.state == "TAG_OPEN":
+                self.cached.append(char)
+                current_char_processed = True
+
+                tag_name_len = len(self.tag_name)
+
+                # 状态: 刚进入 < 之后
+                if self.index == 0:
+                    if char == "/":
+                        self.state = "TAG_CLOSE"
+                        # index 保持 0，准备匹配闭合标签名或跳过空格
+                    elif char.isspace():
+                        # 跳过 < 后的空格
+                        pass # index 保持 0
+                    elif char == self.tag_name[0]:
+                        # 开始匹配标签名
+                        self.index = 1
+                    else:
+                        # 无效标签开头 (不是 /，不是空格，不是 tag_name[0])
+                        self.state = "TEXT"
+                        current_char_processed = True
+                # 状态: 正在匹配标签名
+                elif self.index < tag_name_len:
+                    if self.tag_name[self.index] == char:
+                        self.index += 1
+                    # 允许在标签名匹配过程中遇到空格，视为属性或无效字符处理
+                    elif char.isspace():
+                         # 遇到空格，表示标签名已结束，进入属性/结束符处理
+                         # 将 index 设置为 tag_name_len 以便后续逻辑处理
+                         # 但前提是当前 index 确实匹配到了 tag_name
+                         # 如果是 <t hink> 这种情况，这里会失败
+                         # 为了简化，我们不允许标签名内部有空格，如果需要，逻辑会更复杂
+                         # 因此，如果这里遇到空格但 index < tag_name_len，视为无效
+                         self.state = "TEXT"
+                         current_char_processed = True
+                    else:
+                        # 字符不匹配标签名
+                        self.state = "TEXT"
+                        current_char_processed = True
+                # 状态: 标签名已完全匹配 (self.index == tag_name_len)
+                else: # self.index >= tag_name_len (实际是 ==)
+                    if char == ">":
+                        # 找到了开始标签的结束符
+                        self.state = "TEXT"
+                        self.depth += 1
+                        self.matched = True
+                        self.cached = [] # 清空缓存，丢弃 <tag ...>
+                    elif char.isspace():
+                        # 忽略标签名后的空格
+                        pass # 保持在 TAG_OPEN 状态，等待 > 或属性
+                    else:
+                        # 字符是属性的一部分，忽略它，继续等待 '>'
+                        pass # 保持在 TAG_OPEN 状态
+
+            elif self.state == "TAG_CLOSE":
+                self.cached.append(char)
+                current_char_processed = True # 默认设为 True
+
+                tag_name_len = len(self.tag_name)
+
+                # 状态: 刚进入 </ 之后
+                if self.index == 0:
+                    if char.isspace():
+                        # 跳过 </ 后的空格
+                        pass # index 保持 0
+                    elif char == self.tag_name[0]:
+                        # 开始匹配标签名
+                        self.index = 1
+                    else:
+                        # 无效闭合标签 (不是空格，不是 tag_name[0])
+                        self.state = "TEXT"
+                        current_char_processed = True
+                # 状态: 正在匹配标签名
+                elif self.index < tag_name_len:
+                    if self.tag_name[self.index] == char:
+                        self.index += 1
+                    else:
+                        # 字符不匹配标签名
+                        self.state = "TEXT"
+                        current_char_processed = True
+                # 状态: 标签名已完全匹配 (self.index == tag_name_len)
+                else: # self.index == tag_name_len
+                    if char == ">":
+                        # 找到了 '>'
+                        was_inside_tag = self.depth > 0
+                        self.state = "TEXT" # 无论如何都回到 TEXT 状态
+
+                        if was_inside_tag:
+                            # 确实在标签内部，正常处理闭合标签
+                            self.depth -= 1
+                            self.matched = self.depth > 0
+                            self.cached = [] # 清空缓存，丢弃 </tag>
+                            # current_char_processed 保持 True
+                        else:
+                            # 不在标签内部，这是一个无效/意外的闭合标签
+                            # 将其视为普通文本，但阻止最后的 > 被添加到缓存
+                            # 保留 cached 中已有的 '</tag' 部分，它们将在下次 collect 时作为文本处理
+                            current_char_processed = True # 标记 '>' 已处理，防止循环末尾再次添加
+
+                    elif char.isspace():
+                        # 允许 </tag >, 继续等待 '>'
+                        pass # 保持在 TAG_CLOSE 状态, current_char_processed 保持 True
+                    else:
+                        # 闭合标签名后出现非空格、非 > 的字符
+                        self.state = "TEXT"
+                        current_char_processed = True
+
+            # 如果当前字符未被状态机逻辑处理（即应视为普通文本）
+            if not current_char_processed:
+                # 确保状态是 TEXT
+                if self.state != "TEXT":
+                     # 如果之前在尝试匹配标签但失败了，缓存的内容应视为文本
+                     self.state = "TEXT"
+
+                self.cached.append(char)
+
+            self.pointer += 1
+
+        # 在处理完整个 chunk 后，如果状态是 TEXT，收集剩余缓存
+        if self.state == "TEXT":
+             self._collect()
+
+
+    def final(self, chunk: Optional[str] = None) -> List[Union[XmlMatcherResult, R]]:
+        """处理最后一块数据并返回所有结果"""
+        if chunk:
+            self._update(chunk)
+        # 确保所有剩余缓存都被收集
+        # 即使状态不是 TEXT，也需要收集，以防有未闭合的标签等情况
+        self._collect()
+        return self._pop()
+
+    def update(self, chunk: str) -> List[Union[XmlMatcherResult, R]]:
+        """处理一块数据并返回当前处理的结果"""
+        self._update(chunk)
+        return self._pop()
+
+def parse_function_xml(xml_content: str) -> Dict[str, Any]:
+    """
+    解析XML格式的函数调用信息，转换为字典格式
+
+    参数:
+        xml_content: 包含函数调用的XML字符串
+
+    返回:
+        包含函数名和参数的字典
+    """
+    # 首先，找出根标签（函数名）
+    # function_matcher = XmlMatcher[XmlMatcherResult]("", position=0)
+    # results = function_matcher.final(xml_content)
+
+    # 找到第一个匹配的标签
+    function_name = ""
+    function_content = ""
+
+    # 寻找第一个开始标签
+    tag_start = xml_content.find("<")
+    if tag_start != -1:
+        tag_end = xml_content.find(">", tag_start)
+        if tag_end != -1:
+            # 提取标签名（函数名）
+            tag_content = xml_content[tag_start+1:tag_end].strip()
+            # 处理可能有属性的情况
+            function_name = tag_content.split()[0] if " " in tag_content else tag_content
+
+            # 使用XmlMatcher提取该函数标签内的内容
+            content_matcher = XmlMatcher[XmlMatcherResult](function_name)
+            match_results = content_matcher.final(xml_content)
+
+            for result in match_results:
+                if result.matched:
+                    function_content = result.data
+                    break
+
+    # 如果没有找到函数名或内容，返回空结果
+    if not function_name or not function_content:
+        return {'function_name': '', 'parameter': {}}
+
+    # 解析参数
+    parameters = {}
+    lines = function_content.strip().split('\n')
+    current_param = None
+    current_value = []
+
+    for line in lines:
+        line = line.strip()
+        if line.startswith('<') and '>' in line:
+            # 新参数开始
+            if current_param and current_value:
+                # 保存之前的参数
+                parameters[current_param] = '\n'.join(current_value).strip()
+                current_value = []
+
+            # 提取参数名
+            param_start = line.find('<') + 1
+            param_end = line.find('>', param_start)
+            if param_end != -1:
+                param = line[param_start:param_end]
+                # 检查是否是闭合标签
+                if param.startswith('/'):
+                    if param[1:] == current_param:
+                        current_param = None
+                else:
+                    current_param = param
+                    # 检查是否在同一行有值
+                    rest = line[param_end+1:]
+                    if rest and not rest.startswith('</'):
+                        current_value.append(rest)
+        elif current_param:
+            # 继续收集当前参数的值
+            current_value.append(line)
+
+    # 处理最后一个参数
+    if current_param and current_value:
+        parameters[current_param] = '\n'.join(current_value).strip()
+
+    # 清理参数值中可能的结束标签
+    for param, value in parameters.items():
+        end_tag = f'</{param}>'
+        if value.endswith(end_tag):
+            parameters[param] = value[:-len(end_tag)].strip()
+
+    return {
+        'function_name': function_name,
+        'parameter': parameters
+    }
+
 if __name__ == "__main__":
     os.system("clear")

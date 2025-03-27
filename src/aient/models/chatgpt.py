@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .base import BaseLLM
 from ..plugins import PLUGINS, get_tools_result_async, function_call_list, update_tools_config
-from ..utils.scripts import check_json, safe_get, async_generator_to_sync
+from ..utils.scripts import check_json, safe_get, async_generator_to_sync, parse_function_xml
 from ..core.request import prepare_request_payload
 from ..core.response import fetch_response_stream
 
@@ -131,20 +131,26 @@ class chatgpt(BaseLLM):
                 matching_message = next(filter(lambda x: safe_get(x, "tool_calls", 0, "function", "name", default="") == 'get_next_pdf', self.conversation[convo_id]), None)
                 if matching_message is not None:
                     self.conversation[convo_id] = self.conversation[convo_id][:self.conversation[convo_id].index(matching_message)]
-            self.conversation[convo_id].append({
-                "role": "assistant",
-                "tool_calls": [
-                    {
-                        "id": function_call_id,
-                        "type": "function",
-                        "function": {
-                            "name": function_name,
-                            "arguments": function_arguments,
-                        },
-                    }
-                ],
-                })
-            self.conversation[convo_id].append({"role": role, "tool_call_id": function_call_id, "content": message})
+
+            if not (all(value == False for value in self.plugins.values()) or self.use_plugins == False):
+                self.conversation[convo_id].append({
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": function_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": function_name,
+                                "arguments": function_arguments,
+                            },
+                        }
+                    ],
+                    })
+                self.conversation[convo_id].append({"role": role, "tool_call_id": function_call_id, "content": message})
+            else:
+                self.conversation[convo_id].append({"role": "assistant", "content": "I will use tool: " + function_name + ". tool arguments:" + function_arguments + ". I will get the tool call result in the next user response."})
+                self.conversation[convo_id].append({"role": "user", "content": f"[{function_name} Result]\n\n" + message})
+
         else:
             print('\033[31m')
             print("error: add_to_conversation message is None or empty")
@@ -389,6 +395,13 @@ class chatgpt(BaseLLM):
 
         if response_role is None:
             response_role = "assistant"
+
+        function_parameter = parse_function_xml(full_response)
+        if function_parameter['function_name']:
+            need_function_call = True
+            function_call_name = function_parameter['function_name']
+            function_full_response = json.dumps(function_parameter['parameter'])
+            function_call_id = function_parameter['function_name'] + "_tool_call"
 
         # 处理函数调用
         if need_function_call:

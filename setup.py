@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="aient",
-    version="1.0.38",
+    version="1.0.39",
     description="Aient: The Awakening of Agent.",
     long_description=Path.open(Path("README.md"), encoding="utf-8").read(),
     long_description_content_type="text/markdown",
