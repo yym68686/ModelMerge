@@ -457,95 +457,205 @@ class XmlMatcher(Generic[R]):
         self._update(chunk)
         return self._pop()
 
-def parse_function_xml(xml_content: str) -> Dict[str, Any]:
+def parse_function_xml(xml_content: str) -> List[Dict[str, Any]]:
     """
-    解析XML格式的函数调用信息，转换为字典格式
+    解析XML格式的函数调用信息，转换为字典数组格式
 
     参数:
-        xml_content: 包含函数调用的XML字符串
+        xml_content: 包含一个或多个函数调用的XML字符串
 
     返回:
-        包含函数名和参数的字典
+        包含所有函数调用信息的字典数组，每个字典包含函数名和参数
     """
-    # 首先，找出根标签（函数名）
-    # function_matcher = XmlMatcher[XmlMatcherResult]("", position=0)
-    # results = function_matcher.final(xml_content)
+    result_functions = []
 
-    # 找到第一个匹配的标签
-    function_name = ""
-    function_content = ""
+    position = 0
+    while position < len(xml_content):
+        # 寻找下一个开始标签
+        tag_start = xml_content.find("<", position)
+        if tag_start == -1:
+            break  # 没有找到更多的标签
 
-    # 寻找第一个开始标签
-    tag_start = xml_content.find("<")
-    if tag_start != -1:
+        # 检查是否是XML标签的开始（不是闭合标签）
+        if tag_start + 1 < len(xml_content) and xml_content[tag_start + 1] == '/':
+            # 这是一个结束标签，跳过
+            position = tag_start + 1
+            continue
+
         tag_end = xml_content.find(">", tag_start)
-        if tag_end != -1:
-            # 提取标签名（函数名）
-            tag_content = xml_content[tag_start+1:tag_end].strip()
-            # 处理可能有属性的情况
-            function_name = tag_content.split()[0] if " " in tag_content else tag_content
+        if tag_end == -1:
+            break  # 标签未正确关闭
 
-            # 使用XmlMatcher提取该函数标签内的内容
-            content_matcher = XmlMatcher[XmlMatcherResult](function_name)
-            match_results = content_matcher.final(xml_content)
+        # 提取标签名（函数名）
+        tag_content = xml_content[tag_start+1:tag_end].strip()
+        # 处理可能有属性的情况
+        function_name = tag_content.split()[0] if " " in tag_content else tag_content
 
-            for result in match_results:
-                if result.matched:
-                    function_content = result.data
-                    break
+        if not function_name:
+            position = tag_end + 1
+            continue  # 空标签名，跳过
 
-    # 如果没有找到函数名或内容，返回空结果
-    if not function_name or not function_content:
-        return {'function_name': '', 'parameter': {}}
+        # 查找整个函数调用的起止范围
+        full_start_tag = f"<{function_name}"
+        full_end_tag = f"</{function_name}>"
 
-    # 解析参数
-    parameters = {}
-    lines = function_content.strip().split('\n')
-    current_param = None
-    current_value = []
+        # 从当前位置找到开始标签
+        start_pos = xml_content.find(full_start_tag, position)
+        if start_pos == -1:
+            position = tag_end + 1
+            continue
 
-    for line in lines:
-        line = line.strip()
-        if line.startswith('<') and '>' in line:
-            # 新参数开始
+        # 找到对应的结束标签
+        end_pos = xml_content.find(full_end_tag, start_pos)
+        if end_pos == -1:
+            # 没有找到结束标签，可能是未闭合标签
+            position = tag_end + 1
+            continue
+
+        # 计算整个函数标签内容，包括开始和结束标签
+        end_pos_complete = end_pos + len(full_end_tag)
+        full_tag_content = xml_content[start_pos:end_pos_complete]
+
+        # 使用XmlMatcher提取该函数标签内的内容
+        content_matcher = XmlMatcher[XmlMatcherResult](function_name)
+        match_results = content_matcher.final(full_tag_content)
+
+        function_content = ""
+        for result in match_results:
+            if result.matched:
+                function_content = result.data
+                break
+
+        # 解析参数
+        parameters = {}
+        if function_content:
+            lines = function_content.strip().split('\n')
+            current_param = None
+            current_value = []
+
+            for line in lines:
+                line = line.strip()
+                if line.startswith('<') and '>' in line and not line.startswith('</'):
+                    # 新参数开始
+                    if current_param and current_value:
+                        # 保存之前的参数
+                        parameters[current_param] = '\n'.join(current_value).strip()
+                        current_value = []
+
+                    # 提取参数名
+                    param_start = line.find('<') + 1
+                    param_end = line.find('>', param_start)
+                    if param_end != -1:
+                        param = line[param_start:param_end]
+                        # 检查是否是闭合标签
+                        if not param.startswith('/'):
+                            current_param = param
+                            # 检查是否在同一行有值
+                            rest = line[param_end+1:]
+                            if rest and not rest.startswith('</'):
+                                current_value.append(rest)
+                elif line.startswith('</') and '>' in line:
+                    # 参数结束
+                    if current_param and current_value:
+                        param_end_tag = f"</{current_param}>"
+                        if line.strip() == param_end_tag:
+                            parameters[current_param] = '\n'.join(current_value).strip()
+                            current_param = None
+                            current_value = []
+                elif current_param:
+                    # 继续收集当前参数的值
+                    current_value.append(line)
+
+            # 处理最后一个参数
             if current_param and current_value:
-                # 保存之前的参数
                 parameters[current_param] = '\n'.join(current_value).strip()
-                current_value = []
 
-            # 提取参数名
-            param_start = line.find('<') + 1
-            param_end = line.find('>', param_start)
-            if param_end != -1:
-                param = line[param_start:param_end]
-                # 检查是否是闭合标签
-                if param.startswith('/'):
-                    if param[1:] == current_param:
-                        current_param = None
-                else:
-                    current_param = param
-                    # 检查是否在同一行有值
-                    rest = line[param_end+1:]
-                    if rest and not rest.startswith('</'):
-                        current_value.append(rest)
-        elif current_param:
-            # 继续收集当前参数的值
-            current_value.append(line)
+            # 清理参数值中可能的结束标签
+            for param, value in parameters.items():
+                end_tag = f'</{param}>'
+                if value.endswith(end_tag):
+                    parameters[param] = value[:-len(end_tag)].strip()
 
-    # 处理最后一个参数
-    if current_param and current_value:
-        parameters[current_param] = '\n'.join(current_value).strip()
+        # 将解析的函数添加到结果数组
+        result_functions.append({
+            'function_name': function_name,
+            'parameter': parameters
+        })
 
-    # 清理参数值中可能的结束标签
-    for param, value in parameters.items():
-        end_tag = f'</{param}>'
-        if value.endswith(end_tag):
-            parameters[param] = value[:-len(end_tag)].strip()
+        # 更新位置到当前标签之后，继续查找下一个函数
+        position = end_pos_complete
 
-    return {
-        'function_name': function_name,
-        'parameter': parameters
-    }
+    return result_functions
+
+def parse_continuous_json(json_str: str, function_name: str = "") -> List[Dict[str, Any]]:
+    """
+    解析JSON字符串，无论是单个JSON对象还是多个连续的JSON对象
+    都能正确解析并转换为结构化的函数调用格式列表
+
+    Args:
+        json_str: JSON字符串，可能是单个JSON对象或多个连续JSON对象
+        function_name: 函数名称，默认为空字符串
+
+    Returns:
+        包含函数调用信息的字典列表
+    """
+    if not json_str or not json_str.strip():
+        return []
+
+    # 尝试直接解析为单个JSON
+    try:
+        json_obj = json.loads(json_str)
+        tool_id = function_name + "_single" if function_name else "tool_single"
+        return [{
+            'function_name': function_name or "default_function",
+            'parameter': json_obj,
+            'function_call_id': tool_id
+        }]
+    except json.JSONDecodeError:
+        # 如果不是单个JSON，尝试解析为连续JSON
+        pass
+
+    result = []
+    idx = 0
+    length = len(json_str)
+
+    while idx < length:
+        # 找到JSON对象的开始
+        if json_str[idx] != '{':
+            idx += 1
+            continue
+
+        # 跟踪括号的平衡
+        balance = 1
+        start = idx
+        idx += 1
+
+        # 寻找匹配的右括号
+        while idx < length and balance > 0:
+            if json_str[idx] == '{':
+                balance += 1
+            elif json_str[idx] == '}':
+                balance -= 1
+            idx += 1
+
+        if balance == 0:
+            # 提取出一个完整的JSON对象
+            json_obj_str = json_str[start:idx]
+            try:
+                # 解析JSON对象
+                json_obj = json.loads(json_obj_str)
+                # 构造函数调用信息
+                tool_id = function_name + "_" + str(len(result)) if function_name else "tool_" + str(len(result))
+                result.append({
+                    'function_name': function_name or "default_function",
+                    'parameter': json_obj,
+                    'function_call_id': tool_id
+                })
+            except json.JSONDecodeError:
+                # 忽略解析错误
+                pass
+
+    return result
 
 if __name__ == "__main__":
     os.system("clear")

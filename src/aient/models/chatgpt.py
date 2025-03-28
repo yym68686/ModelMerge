@@ -6,13 +6,13 @@ import httpx
 import asyncio
 import requests
 from typing import Set
-from typing import Union, Optional, Callable
+from typing import Union, Optional, Callable, List, Dict, Any
 from pathlib import Path
 
 
 from .base import BaseLLM
 from ..plugins import PLUGINS, get_tools_result_async, function_call_list, update_tools_config
-from ..utils.scripts import check_json, safe_get, async_generator_to_sync, parse_function_xml
+from ..utils.scripts import safe_get, async_generator_to_sync, parse_function_xml, parse_continuous_json
 from ..core.request import prepare_request_payload
 from ..core.response import fetch_response_stream
 
@@ -148,8 +148,8 @@ class chatgpt(BaseLLM):
                     })
                 self.conversation[convo_id].append({"role": role, "tool_call_id": function_call_id, "content": message})
             else:
-                self.conversation[convo_id].append({"role": "assistant", "content": "I will use tool: " + function_name + ". tool arguments:" + function_arguments + ". I will get the tool call result in the next user response."})
-                self.conversation[convo_id].append({"role": "user", "content": f"[{function_name} Result]\n\n" + message})
+                self.conversation[convo_id].append({"role": "assistant", "content": "I will use tool: " + function_arguments + ". I will get the tool call result in the next user response."})
+                self.conversation[convo_id].append({"role": "user", "content": message})
 
         else:
             print('\033[31m')
@@ -176,10 +176,6 @@ class chatgpt(BaseLLM):
                     if type(self.conversation[convo_id][message_index]["content"]) == dict \
                     and type(self.conversation[convo_id][message_index + 1]["content"]) == list:
                         self.conversation[convo_id][message_index]["content"] = [self.conversation[convo_id][message_index]["content"]]
-                    if type(self.conversation[convo_id][message_index]["content"]) == dict \
-                    and type(self.conversation[convo_id][message_index + 1]["content"]) == dict:
-                        self.conversation[convo_id][message_index]["content"] = [self.conversation[convo_id][message_index]["content"]]
-                        self.conversation[convo_id][message_index + 1]["content"] = [self.conversation[convo_id][message_index + 1]["content"]]
                     self.conversation[convo_id][message_index]["content"] += self.conversation[convo_id][message_index + 1]["content"]
                 self.conversation[convo_id].pop(message_index + 1)
                 conversation_len = conversation_len - 1
@@ -407,62 +403,107 @@ class chatgpt(BaseLLM):
             response_role = "assistant"
 
         function_parameter = parse_function_xml(full_response)
-        if function_parameter['function_name']:
+        if function_parameter:
             need_function_call = True
-            function_call_name = function_parameter['function_name']
-            function_full_response = json.dumps(function_parameter['parameter'])
-            function_call_id = function_parameter['function_name'] + "_tool_call"
 
         # 处理函数调用
         if need_function_call:
             if self.print_log:
                 print("function_full_response", function_full_response)
-            function_full_response = check_json(function_full_response)
+
             function_response = ""
+            # 定义处理单个工具调用的辅助函数
+            async def process_single_tool_call(tool_name, tool_args, tool_id):
+                nonlocal function_response
 
-            if not self.function_calls_counter.get(function_call_name):
-                self.function_calls_counter[function_call_name] = 1
-            else:
-                self.function_calls_counter[function_call_name] += 1
-
-            has_args = safe_get(self.function_call_list, function_call_name, "parameters", "required", default=False)
-            if self.function_calls_counter[function_call_name] <= self.function_call_max_loop and (function_full_response != "{}" or not has_args):
-                function_call_max_tokens = self.truncate_limit - 1000
-                if function_call_max_tokens <= 0:
-                    function_call_max_tokens = int(self.truncate_limit / 2)
-                if self.print_log:
-                    print("\033[32m function_call", function_call_name, "max token:", function_call_max_tokens, "\033[0m")
-
-                # 处理函数调用结果
-                if is_async:
-                    async for chunk in get_tools_result_async(
-                        function_call_name, function_full_response, function_call_max_tokens,
-                        model or self.engine, chatgpt, kwargs.get('api_key', self.api_key),
-                        self.api_url, use_plugins=False, model=model or self.engine,
-                        add_message=self.add_to_conversation, convo_id=convo_id, language=language
-                    ):
-                        if "function_response:" in chunk:
-                            function_response = chunk.replace("function_response:", "")
-                        else:
-                            yield chunk
+                if not self.function_calls_counter.get(tool_name):
+                    self.function_calls_counter[tool_name] = 1
                 else:
-                    async def run_async():
-                        nonlocal function_response
+                    self.function_calls_counter[tool_name] += 1
+
+                tool_response = ""
+                has_args = safe_get(self.function_call_list, tool_name, "parameters", "required", default=False)
+                if self.function_calls_counter[tool_name] <= self.function_call_max_loop and (tool_args != "{}" or not has_args):
+                    function_call_max_tokens = self.truncate_limit - 1000
+                    if function_call_max_tokens <= 0:
+                        function_call_max_tokens = int(self.truncate_limit / 2)
+                    if self.print_log:
+                        print(f"\033[32m function_call {tool_name}, max token: {function_call_max_tokens} \033[0m")
+
+                    # 处理函数调用结果
+                    if is_async:
                         async for chunk in get_tools_result_async(
-                            function_call_name, function_full_response, function_call_max_tokens,
+                            tool_name, tool_args, function_call_max_tokens,
                             model or self.engine, chatgpt, kwargs.get('api_key', self.api_key),
                             self.api_url, use_plugins=False, model=model or self.engine,
                             add_message=self.add_to_conversation, convo_id=convo_id, language=language
                         ):
-                            if "function_response:" in chunk:
-                                function_response = chunk.replace("function_response:", "")
-                            else:
+                            yield chunk
+                    else:
+                        async def run_async():
+                            async for chunk in get_tools_result_async(
+                                tool_name, tool_args, function_call_max_tokens,
+                                model or self.engine, chatgpt, kwargs.get('api_key', self.api_key),
+                                self.api_url, use_plugins=False, model=model or self.engine,
+                                add_message=self.add_to_conversation, convo_id=convo_id, language=language
+                            ):
                                 yield chunk
 
-                    for chunk in async_generator_to_sync(run_async()):
-                        yield chunk
-            else:
-                function_response = "无法找到相关信息，停止使用 tools"
+                        for chunk in async_generator_to_sync(run_async()):
+                            yield chunk
+                else:
+                    tool_response = f"无法找到相关信息，停止使用工具 {tool_name}"
+
+                yield tool_response
+
+            # 使用统一的JSON解析逻辑
+            try:
+                if function_full_response:
+                    function_parameter = parse_continuous_json(function_full_response, function_call_name)
+            except Exception as e:
+                print(f"解析JSON失败: {e}")
+                # 保持原始工具调用
+                tool_calls = [{
+                    'function_name': function_call_name,
+                    'parameter': function_full_response,
+                    'function_call_id': function_call_id
+                }]
+
+            # 统一处理逻辑，将所有情况转换为列表处理
+            if isinstance(function_parameter, list) and function_parameter:
+                # 多个工具调用
+                tool_calls = function_parameter
+
+            # 处理所有工具调用
+            all_responses = []
+
+            for tool_info in tool_calls:
+                tool_name = tool_info['function_name']
+                tool_args = json.dumps(tool_info['parameter']) if not isinstance(tool_info['parameter'], str) else tool_info['parameter']
+                tool_id = tool_info.get('function_call_id', tool_name + "_tool_call")
+
+                tool_response = ""
+                if is_async:
+                    async for chunk in process_single_tool_call(tool_name, tool_args, tool_id):
+                        if isinstance(chunk, str) and "function_response:" in chunk:
+                            tool_response = chunk.replace("function_response:", "")
+                        else:
+                            yield chunk
+                else:
+                    for chunk in async_generator_to_sync(process_single_tool_call(tool_name, tool_args, tool_id)):
+                        if isinstance(chunk, str) and "function_response:" in chunk:
+                            tool_response = chunk.replace("function_response:", "")
+                        else:
+                            yield chunk
+                all_responses.append(f"[{tool_name}({tool_args}) Result]:\n\n{tool_response}")
+
+            # 合并所有工具响应
+            function_response = "\n\n".join(all_responses)
+
+            # 使用第一个工具的名称和参数作为历史记录
+            function_call_name = tool_calls[0]['function_name']
+            function_full_response = function_full_response or json.dumps(tool_calls) if not isinstance(tool_calls[0]['parameter'], str) else tool_calls
+            function_call_id = tool_calls[0].get('function_call_id', function_call_name + "_tool_call")
 
             response_role = "tool"
 
