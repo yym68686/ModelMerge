@@ -176,6 +176,10 @@ class chatgpt(BaseLLM):
                     if type(self.conversation[convo_id][message_index]["content"]) == dict \
                     and type(self.conversation[convo_id][message_index + 1]["content"]) == list:
                         self.conversation[convo_id][message_index]["content"] = [self.conversation[convo_id][message_index]["content"]]
+                    if type(self.conversation[convo_id][message_index]["content"]) == dict \
+                    and type(self.conversation[convo_id][message_index + 1]["content"]) == dict:
+                        self.conversation[convo_id][message_index]["content"] = [self.conversation[convo_id][message_index]["content"]]
+                        self.conversation[convo_id][message_index + 1]["content"] = [self.conversation[convo_id][message_index + 1]["content"]]
                     self.conversation[convo_id][message_index]["content"] += self.conversation[convo_id][message_index + 1]["content"]
                 self.conversation[convo_id].pop(message_index + 1)
                 conversation_len = conversation_len - 1
